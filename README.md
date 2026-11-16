@@ -2,6 +2,10 @@
 
 Editor de imagens web no estilo Photoshop, feito com HTML, CSS e JavaScript puro (canvas). Não tem build nem dependências.
 
+## Link
+- Editor: https://evellengomes.github.io/photoview/
+- Gerador de anúncio: https://evellengomes.github.io/photoview/anuncio/ (envie a sua foto de óculos com fundo branco)
+
 ## Como rodar
 - Com o WAMP ligado: abra http://localhost/projetos/photoview/
 - Ou qualquer servidor estático na pasta (ex.: `npx serve .`)
