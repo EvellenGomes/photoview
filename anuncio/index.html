@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Anúncio Óculos</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,400;0,600;0,800;1,800&family=Playfair+Display:wght@500;700&display=swap" rel="stylesheet">
+<style>
+  :root { --bg: #1e1f22; --panel: #2b2d31; --border: #3d4046; --text: #dcdde0; --muted: #8d9096; --accent: #c9a25b; color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px system-ui, "Segoe UI", sans-serif; display: grid; grid-template-columns: 340px 1fr; min-height: 100vh; }
+  aside { background: var(--panel); border-right: 1px solid var(--border); padding: 18px; overflow-y: auto; max-height: 100vh; }
+  h1 { font-size: 16px; margin: 0 0 4px; }
+  p.sub { color: var(--muted); margin: 0 0 16px; font-size: 12px; }
+  label { display: block; color: var(--muted); font-size: 12px; margin: 10px 0 4px; }
+  input[type=text], textarea { width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 7px 9px; font: inherit; }
+  textarea { resize: vertical; min-height: 54px; }
+  fieldset { border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px 12px; margin: 0 0 12px; }
+  legend { color: var(--accent); font-weight: 600; padding: 0 6px; }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  button { width: 100%; padding: 11px; border: 0; border-radius: 8px; background: var(--accent); color: #1b1309; font-weight: 700; font-size: 14px; cursor: pointer; margin-top: 6px; }
+  button.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); font-weight: 500; }
+  main { display: grid; place-items: center; padding: 20px; overflow: auto; }
+  canvas { max-height: calc(100vh - 40px); max-width: 100%; height: auto; box-shadow: 0 20px 60px rgba(0,0,0,.6); border-radius: 6px; background: #000; }
+  @media (max-width: 800px) { body { grid-template-columns: 1fr; } aside { max-height: none; } canvas { max-height: none; width: 100%; } }
+</style>
+</head>
+<body>
+<aside>
+  <h1>Anúncio de lançamento</h1>
+  <p class="sub">Story 1080 × 1920. Edite os textos e baixe o PNG.</p>
+
+  <fieldset>
+    <legend>Destaque</legend>
+    <label for="f_titulo">Texto vertical</label><input type="text" id="f_titulo" value="LANÇAMENTO">
+    <label for="f_marca">Marca</label><input type="text" id="f_marca" value="GUCCI">
+    <label for="f_linha">Linha abaixo da marca</label><input type="text" id="f_linha" value="ÓCULOS DE SOL · METAL DOURADO">
+  </fieldset>
+
+  <fieldset>
+    <legend>Produto</legend>
+    <div class="row">
+      <div><label for="f_nome1">Nome (linha 1)</label><input type="text" id="f_nome1" value="ÓCULOS GUCCI"></div>
+      <div><label for="f_nome2">Nome (linha 2)</label><input type="text" id="f_nome2" value="DOURADO"></div>
+    </div>
+    <label for="f_desc">Descrição curta</label><input type="text" id="f_desc" value="Armação em metal · lentes marrons">
+    <label for="f_preco">Preço (opcional)</label><input type="text" id="f_preco" value="" placeholder="ex.: R$ 2.490 ou 10x de R$ 249">
+  </fieldset>
+
+  <fieldset>
+    <legend>Sua loja</legend>
+    <label for="f_pergunta">Pergunta do cartão</label><textarea id="f_pergunta">ESCOLHEU SEU
+NOVO ESTILO?</textarea>
+    <label for="f_loja">Nome da loja</label><input type="text" id="f_loja" value="SUA ÓTICA">
+    <label for="f_slogan">Frase da loja</label><input type="text" id="f_slogan" value="ESTILO QUE SE VÊ">
+    <label for="f_rodape">Rodapé</label><input type="text" id="f_rodape" value="DISPONÍVEL EM TODAS AS NOSSAS LOJAS E NO SITE">
+  </fieldset>
+
+  <fieldset>
+    <legend>Detalhes (3 quadros)</legend>
+    <label for="f_d1">Quadro 1</label><input type="text" id="f_d1" value="DETALHES|EXCLUSIVOS">
+    <label for="f_d2">Quadro 2</label><input type="text" id="f_d2" value="ACABAMENTO|DOURADO">
+    <label for="f_d3">Quadro 3</label><input type="text" id="f_d3" value="DESIGN|ICÔNICO">
+    <p class="sub" style="margin:8px 0 0">Use | para quebrar a linha.</p>
+  </fieldset>
+
+  <label for="f_foto">Trocar a foto do óculos (fundo branco)</label>
+  <input type="file" id="f_foto" accept="image/*">
+  <button id="baixar">Baixar PNG</button>
+  <button id="restaurar" class="ghost">Restaurar textos</button>
+</aside>
+<main><canvas id="cv" width="1080" height="1920" aria-label="Prévia do anúncio"></canvas></main>
+
+<script>
+(() => {
+  const W = 1080, H = 1920;
+  const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+  const ids = ['titulo', 'marca', 'linha', 'nome1', 'nome2', 'desc', 'preco', 'pergunta', 'loja', 'slogan', 'rodape', 'd1', 'd2', 'd3'];
+  const field = id => document.getElementById('f_' + id);
+  const defaults = Object.fromEntries(ids.map(id => [id, field(id).value]));
+  const val = id => field(id).value.trim();
+
+  // recortes da foto (frações da imagem) para os 3 quadros de detalhe
+  const CROPS = [
+    { x: 0.645, y: 0.43, w: 0.16, h: 0.23 }, // haste com o logo
+    { x: 0.265, y: 0.45, w: 0.14, h: 0.25 }, // ponte e plaquetas
+    { x: 0.085, y: 0.36, w: 0.23, h: 0.42 }, // lente com a gravação
+  ];
+
+  let photo = new Image();
+  photo.src = 'oculos-gucci.webp';
+  const defaultPhoto = photo;
+
+  // ---------- utilidades de desenho
+  const rr = (x, y, w, h, r) => { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); };
+  function fitFont(text, weight, family, max, maxW, italic = '') {
+    let s = max;
+    do { ctx.font = `${italic}${weight} ${s}px ${family}`; s -= 2; } while (ctx.measureText(text).width > maxW && s > 10);
+    return s + 2;
+  }
+  function spaced(text, x, y, spacing, align = 'center') {
+    // texto com espaçamento entre letras
+    const chars = [...text];
+    const widths = chars.map(c => ctx.measureText(c).width);
+    const total = widths.reduce((a, b) => a + b, 0) + spacing * (chars.length - 1);
+    let cx = align === 'center' ? x - total / 2 : align === 'right' ? x - total : x;
+    const prev = ctx.textAlign; ctx.textAlign = 'left';
+    chars.forEach((c, i) => { ctx.fillText(c, cx, y); cx += widths[i] + spacing; });
+    ctx.textAlign = prev;
+    return total;
+  }
+  function noise(x, y, w, h, amount, seed = 1) {
+    const img = ctx.getImageData(x, y, w, h), d = img.data;
+    let s = seed;
+    const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
+    for (let i = 0; i < d.length; i += 4) { const n = (rnd() - .5) * amount; d[i] += n; d[i + 1] += n; d[i + 2] += n; }
+    ctx.putImageData(img, x, y);
+  }
+
+  // ---------- partes do anúncio
+  function background() {
+    // cetim marrom-café com reflexos dourados
+    const g = ctx.createLinearGradient(0, 0, W, 1100);
+    g.addColorStop(0, '#2a1a10'); g.addColorStop(.5, '#4a2f1a'); g.addColorStop(1, '#1d120b');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    ctx.save();
+    ctx.globalCompositeOperation = 'screen';
+    const folds = [[-200, 300, 0.18], [100, -100, 0.12], [420, 520, 0.16], [-50, 820, 0.1], [700, 80, 0.14]];
+    for (const [x, y, a] of folds) {
+      ctx.save(); ctx.translate(x, y); ctx.rotate(-0.55);
+      const s = ctx.createLinearGradient(0, -90, 0, 90);
+      s.addColorStop(0, 'rgba(255,214,150,0)'); s.addColorStop(.5, `rgba(255,214,150,${a})`); s.addColorStop(1, 'rgba(255,214,150,0)');
+      ctx.fillStyle = s; ctx.fillRect(-200, -90, 1900, 180);
+      ctx.restore();
+    }
+    ctx.restore();
+    // brilho atrás do produto
+    const r = ctx.createRadialGradient(720, 560, 40, 720, 560, 700);
+    r.addColorStop(0, 'rgba(255,220,160,.28)'); r.addColorStop(1, 'rgba(255,220,160,0)');
+    ctx.fillStyle = r; ctx.fillRect(0, 0, W, 1150);
+    noise(0, 0, W, 1100, 10, 7);
+  }
+
+  function verticalTitle() {
+    const text = val('titulo') || ' ';
+    ctx.save();
+    ctx.textBaseline = 'alphabetic'; ctx.textAlign = 'left';
+    const size = fitFont(text, 800, 'Montserrat', 210, 920);
+    const cols = [{ x: 205, fill: true, a: 1 }, { x: 375, fill: false, a: .45 }, { x: 545, fill: false, a: .22 }];
+    for (const c of cols.slice().reverse()) {
+      ctx.save();
+      ctx.translate(c.x, 975); ctx.rotate(-Math.PI / 2); // termina acima do tampo de mármore
+      ctx.globalAlpha = c.a;
+      if (c.fill) {
+        const g = ctx.createLinearGradient(0, -size, 0, 0);
+        g.addColorStop(0, '#fff4dd'); g.addColorStop(.55, '#e8cf9c'); g.addColorStop(1, '#b8904f');
+        ctx.fillStyle = g;
+        ctx.shadowColor = 'rgba(0,0,0,.45)'; ctx.shadowBlur = 18; ctx.shadowOffsetY = 6;
+        ctx.fillText(text, 0, 0);
+      } else {
+        ctx.strokeStyle = '#e8cf9c'; ctx.lineWidth = 2; ctx.strokeText(text, 0, 0);
+      }
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
+  // cartão em arco com o óculos em destaque
+  const CARD = { x: 380, y: 110, w: 660, h: 940 };
+  function archPath() {
+    const { x, y, w, h } = CARD, R = w / 2;
+    ctx.beginPath();
+    ctx.moveTo(x, y + h); ctx.lineTo(x, y + R);
+    ctx.arc(x + R, y + R, R, Math.PI, 0);
+    ctx.lineTo(x + w, y + h); ctx.closePath();
+  }
+  function heroCard() {
+    const { x, y, w, h } = CARD;
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,.55)'; ctx.shadowBlur = 60; ctx.shadowOffsetY = 25;
+    archPath();
+    const g = ctx.createLinearGradient(0, y, 0, y + h);
+    g.addColorStop(0, '#fbf6ee'); g.addColorStop(1, '#ead9bd');
+    ctx.fillStyle = g; ctx.fill();
+    ctx.restore();
+    // filete dourado
+    ctx.save(); archPath(); ctx.strokeStyle = 'rgba(201,162,91,.9)'; ctx.lineWidth = 3; ctx.stroke(); ctx.restore();
+    ctx.save();
+    archPath(); ctx.clip();
+    const r = ctx.createRadialGradient(x + w / 2, y + 520, 30, x + w / 2, y + 520, 480);
+    r.addColorStop(0, 'rgba(255,255,255,.9)'); r.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = r; ctx.fillRect(x, y, w, h);
+    // marca e linha
+    ctx.fillStyle = '#3a2615'; ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+    const marca = val('marca');
+    fitFont(marca, 700, '"Playfair Display"', 92, w - 160);
+    spaced(marca, x + w / 2, y + 300, 14);
+    ctx.fillStyle = '#9a7340';
+    fitFont(val('linha'), 600, 'Montserrat', 22, w - 140);
+    spaced(val('linha'), x + w / 2, y + 345, 4);
+    ctx.fillStyle = '#c9a25b'; ctx.fillRect(x + w / 2 - 40, y + 368, 80, 3);
+    // óculos (multiplicar: o branco da foto some no creme)
+    if (photo.complete && photo.naturalWidth) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'multiply';
+      // nesta foto o óculos fica um pouco à esquerda do centro: compensa para caber no cartão
+      const pw = 820, ph = pw * photo.naturalHeight / photo.naturalWidth;
+      const shift = photo === defaultPhoto ? pw * 0.065 : 0;
+      ctx.translate(x + w / 2 + shift, y + 640); ctx.rotate(-0.07);
+      ctx.drawImage(photo, -pw / 2, -ph / 2, pw, ph);
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
+  function marble() {
+    const top = 1000;
+    const g = ctx.createLinearGradient(0, top, 0, H);
+    g.addColorStop(0, '#f6f2ec'); g.addColorStop(1, '#e9e3da');
+    ctx.fillStyle = g; ctx.fillRect(0, top, W, H - top);
+    // veios do mármore
+    let s = 42; const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
+    ctx.save();
+    for (let i = 0; i < 14; i++) {
+      ctx.beginPath();
+      let px = rnd() * W * 1.4 - 200, py = top + rnd() * (H - top);
+      ctx.moveTo(px, py);
+      for (let k = 0; k < 6; k++) { px += 120 + rnd() * 160; py += (rnd() - .5) * 140; ctx.quadraticCurveTo(px - 60, py + (rnd() - .5) * 120, px, py); }
+      ctx.strokeStyle = `rgba(120,110,100,${0.05 + rnd() * 0.12})`; ctx.lineWidth = 0.6 + rnd() * 2.2;
+      ctx.stroke();
+    }
+    ctx.restore();
+    noise(0, top, W, H - top, 8, 3);
+    // borda do tampo
+    const e = ctx.createLinearGradient(0, top - 4, 0, top + 30);
+    e.addColorStop(0, 'rgba(255,255,255,1)'); e.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.fillRect(0, top - 6, W, 6);
+    ctx.fillStyle = e; ctx.fillRect(0, top, W, 30);
+  }
+
+  function productText() {
+    const x = 60;
+    ctx.save();
+    ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+    ctx.fillStyle = '#5a3a1e';
+    fitFont(val('nome1'), 800, 'Montserrat', 58, 560, 'italic ');
+    ctx.fillText(val('nome1'), x, 1150);
+    ctx.fillStyle = '#2b1c10';
+    fitFont(val('nome2'), 800, 'Montserrat', 58, 560, 'italic ');
+    ctx.fillText(val('nome2'), x, 1214);
+    ctx.fillStyle = '#7d6a58';
+    fitFont(val('desc'), 400, 'Montserrat', 26, 560);
+    ctx.fillText(val('desc'), x, 1262);
+    if (val('preco')) {
+      fitFont(val('preco'), 800, 'Montserrat', 40, 560);
+      const tw = ctx.measureText(val('preco')).width;
+      rr(x, 1290, tw + 44, 64, 32); ctx.fillStyle = '#3a2615'; ctx.fill();
+      ctx.fillStyle = '#f4dfb4'; ctx.fillText(val('preco'), x + 22, 1335);
+    }
+    ctx.restore();
+  }
+
+  function storeCard() {
+    const x = 700, y = 1060, w = 330, h = 330;
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,.18)'; ctx.shadowBlur = 30; ctx.shadowOffsetY = 10;
+    rr(x, y, w, h, 28); ctx.fillStyle = 'rgba(255,255,255,.94)'; ctx.fill();
+    ctx.restore();
+    // ícone (presente)
+    ctx.save();
+    ctx.beginPath(); ctx.arc(x + w / 2, y + 48, 26, 0, Math.PI * 2); ctx.fillStyle = '#7a4f24'; ctx.fill();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.5; ctx.lineJoin = 'round';
+    ctx.strokeRect(x + w / 2 - 11, y + 44, 22, 14); ctx.strokeRect(x + w / 2 - 13, y + 38, 26, 6);
+    ctx.beginPath(); ctx.moveTo(x + w / 2, y + 38); ctx.lineTo(x + w / 2, y + 58); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x + w / 2, y + 38); ctx.quadraticCurveTo(x + w / 2 - 12, y + 26, x + w / 2 - 6, y + 38); ctx.moveTo(x + w / 2, y + 38); ctx.quadraticCurveTo(x + w / 2 + 12, y + 26, x + w / 2 + 6, y + 38); ctx.stroke();
+    ctx.restore();
+    ctx.save();
+    ctx.textAlign = 'center'; ctx.fillStyle = '#4a3a2c';
+    const lines = val('pergunta').split('\n').filter(Boolean).slice(0, 3);
+    lines.forEach((ln, i) => { fitFont(ln, 600, 'Montserrat', 22, w - 40); ctx.fillText(ln, x + w / 2, y + 110 + i * 28); });
+    const loja = val('loja');
+    ctx.fillStyle = '#2b1c10';
+    // nome da loja serifado: uma linha se couber grande, senão divide em duas
+    const words = loja.split(/\s+/);
+    let nameLines = [loja];
+    if (fitFont(loja, 500, '"Playfair Display"', 54, w - 40) < 40 && words.length > 1) {
+      const m = Math.ceil(words.length / 2);
+      nameLines = [words.slice(0, m).join(' '), words.slice(m).join(' ')];
+    }
+    let ny = y + 110 + (lines.length - 1) * 28 + 22;
+    nameLines.forEach(ln => { const s = fitFont(ln, 500, '"Playfair Display"', nameLines.length > 1 ? 44 : 54, w - 40); ny += s * 1.05; ctx.fillText(ln, x + w / 2, ny); });
+    ctx.fillStyle = '#8a6a45';
+    fitFont(val('slogan'), 400, '"Playfair Display"', 17, w - 40);
+    spaced(val('slogan'), x + w / 2, Math.min(y + h - 20, ny + 38), 1.5);
+    ctx.restore();
+  }
+
+  function details() {
+    const y = 1430, w = 300, h = 230, gap = 30, x0 = (W - (3 * w + 2 * gap)) / 2;
+    for (let i = 0; i < 3; i++) {
+      const x = x0 + i * (w + gap);
+      ctx.save();
+      ctx.shadowColor = 'rgba(0,0,0,.15)'; ctx.shadowBlur = 24; ctx.shadowOffsetY = 8;
+      rr(x, y, w, h, 20); ctx.fillStyle = '#fff'; ctx.fill();
+      ctx.restore();
+      if (photo.complete && photo.naturalWidth) {
+        ctx.save(); rr(x, y, w, h, 20); ctx.clip();
+        const c = CROPS[i], sw = c.w * photo.naturalWidth, sh = c.h * photo.naturalHeight;
+        // preenche o quadro sem distorcer
+        const k = Math.max(w / sw, h / sh), dw = sw * k, dh = sh * k;
+        ctx.drawImage(photo, c.x * photo.naturalWidth, c.y * photo.naturalHeight, sw, sh, x + (w - dw) / 2, y + (h - dh) / 2, dw, dh);
+        ctx.restore();
+      }
+      ctx.save(); rr(x, y, w, h, 20); ctx.strokeStyle = 'rgba(201,162,91,.5)'; ctx.lineWidth = 1.5; ctx.stroke(); ctx.restore();
+      const [l1, l2 = ''] = val('d' + (i + 1)).split('|');
+      ctx.save(); ctx.textAlign = 'center'; ctx.fillStyle = '#3d2f24';
+      fitFont(l1.trim(), 600, 'Montserrat', 24, w - 20); ctx.fillText(l1.trim(), x + w / 2, y + h + 46);
+      fitFont(l2.trim(), 600, 'Montserrat', 24, w - 20); ctx.fillText(l2.trim(), x + w / 2, y + h + 76);
+      ctx.restore();
+      if (i < 2) { ctx.fillStyle = 'rgba(90,70,50,.25)'; ctx.fillRect(x + w + gap / 2, y + h + 22, 1.5, 64); }
+    }
+  }
+
+  function footer() {
+    const x = 60, y = 1806, w = W - 120, h = 76;
+    ctx.save();
+    rr(x, y, w, h, h / 2); ctx.fillStyle = 'rgba(255,255,255,.75)'; ctx.fill();
+    ctx.strokeStyle = '#8a5a2b'; ctx.lineWidth = 2; ctx.stroke();
+    // sacola
+    const bx = x + 46, by = y + h / 2;
+    ctx.strokeStyle = '#7a4f24'; ctx.lineWidth = 2.5; ctx.lineJoin = 'round';
+    rr(bx - 13, by - 8, 26, 24, 3); ctx.stroke();
+    ctx.beginPath(); ctx.arc(bx, by - 8, 7, Math.PI, 0); ctx.stroke();
+    ctx.fillStyle = '#6b4220'; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    const t = val('rodape');
+    fitFont(t, 800, 'Montserrat', 30, w - 120, 'italic ');
+    ctx.fillText(t, x + 84, by + 1);
+    ctx.restore();
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    ctx.textBaseline = 'alphabetic';
+    background();
+    verticalTitle();
+    marble();
+    heroCard();
+    productText();
+    storeCard();
+    details();
+    footer();
+  }
+
+  // ---------- eventos
+  let queued = false;
+  const redraw = () => { if (queued) return; queued = true; requestAnimationFrame(() => { queued = false; draw(); }); };
+  ids.forEach(id => field(id).addEventListener('input', redraw));
+  photo.onload = redraw;
+  document.getElementById('f_foto').addEventListener('change', e => {
+    const f = e.target.files[0]; if (!f) return;
+    const img = new Image();
+    img.onload = () => { photo = img; redraw(); };
+    img.src = URL.createObjectURL(f);
+  });
+  document.getElementById('baixar').addEventListener('click', () => {
+    draw();
+    cv.toBlob(b => {
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(b);
+      a.download = 'anuncio-' + (val('marca') || 'oculos').toLowerCase().replace(/[^a-z0-9]+/g, '-') + '.png';
+      a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    }, 'image/png');
+  });
+  document.getElementById('restaurar').addEventListener('click', () => { ids.forEach(id => field(id).value = defaults[id]); redraw(); });
+
+  // espera as fontes para o texto sair certo no canvas
+  Promise.all([
+    document.fonts.load('800 40px Montserrat'), document.fonts.load('italic 800 40px Montserrat'),
+    document.fonts.load('600 40px Montserrat'), document.fonts.load('400 40px Montserrat'),
+    document.fonts.load('700 40px "Playfair Display"'), document.fonts.load('500 40px "Playfair Display"'),
+  ]).catch(() => {}).finally(redraw);
+  redraw();
+})();
+</script>
+</body>
+</html>

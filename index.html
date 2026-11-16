@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PhotoView</title>
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+<header id="menubar">
+  <div class="brand">PhotoView</div>
+  <nav id="menus">
+    <div class="menu" data-menu="arquivo"><button>Arquivo</button>
+      <div class="dropdown">
+        <button data-cmd="new">Novo…</button>
+        <button data-cmd="open">Abrir imagem… <kbd>Ctrl+O</kbd></button>
+        <button data-cmd="openLayer">Inserir como camada…</button>
+        <hr>
+        <button data-cmd="saveProject">Salvar projeto (.pview) <kbd>Ctrl+S</kbd></button>
+        <button data-cmd="openProject">Abrir projeto…</button>
+        <hr>
+        <button data-cmd="exportPNG">Exportar PNG <kbd>Ctrl+Shift+E</kbd></button>
+        <button data-cmd="exportJPG">Exportar JPEG</button>
+        <button data-cmd="exportWEBP">Exportar WebP</button>
+      </div>
+    </div>
+    <div class="menu"><button>Editar</button>
+      <div class="dropdown">
+        <button data-cmd="undo">Desfazer <kbd>Ctrl+Z</kbd></button>
+        <button data-cmd="redo">Refazer <kbd>Ctrl+Shift+Z</kbd></button>
+        <hr>
+        <button data-cmd="freeTransform">Transformação livre <kbd>Ctrl+Alt+T</kbd></button>
+        <hr>
+        <button data-cmd="copy">Copiar <kbd>Ctrl+C</kbd></button>
+        <button data-cmd="clear">Limpar seleção <kbd>Del</kbd></button>
+        <button data-cmd="fill">Preencher com cor principal <kbd>Alt+Del</kbd></button>
+        <hr>
+        <button data-cmd="selectAll">Selecionar tudo <kbd>Ctrl+A</kbd></button>
+        <button data-cmd="deselect">Desmarcar <kbd>Ctrl+D</kbd></button>
+        <button data-cmd="invertSel">Inverter seleção <kbd>Ctrl+Shift+I</kbd></button>
+      </div>
+    </div>
+    <div class="menu"><button>Imagem</button>
+      <div class="dropdown">
+        <button data-cmd="imageSize">Tamanho da imagem… <kbd>Ctrl+Alt+I</kbd></button>
+        <button data-cmd="canvasSize">Tamanho da tela… <kbd>Ctrl+Alt+C</kbd></button>
+        <button data-cmd="crop">Cortar na seleção</button>
+        <button data-cmd="cropTool">Ferramenta Recortar… <kbd>C</kbd></button>
+        <hr>
+        <button data-cmd="rotCW">Girar 90° horário</button>
+        <button data-cmd="rotCCW">Girar 90° anti-horário</button>
+        <button data-cmd="rot180">Girar 180°</button>
+        <button data-cmd="flipH">Espelhar horizontal</button>
+        <button data-cmd="flipV">Espelhar vertical</button>
+        <hr>
+        <div class="sub-title">Ajustes</div>
+        <button data-cmd="adj:brightness">Brilho/Contraste…</button>
+        <button data-cmd="adj:levels">Níveis… <kbd>Ctrl+L</kbd></button>
+        <button data-cmd="adj:curves">Curvas… <kbd>Ctrl+M</kbd></button>
+        <button data-cmd="adj:hsl">Matiz/Saturação… <kbd>Ctrl+U</kbd></button>
+        <button data-cmd="adj:threshold">Limiar…</button>
+        <button data-cmd="adj:posterize">Posterizar…</button>
+        <button data-cmd="fx:invert">Inverter <kbd>Ctrl+I</kbd></button>
+        <button data-cmd="fx:desaturate">Dessaturar <kbd>Ctrl+Shift+U</kbd></button>
+        <button data-cmd="fx:sepia">Sépia</button>
+        <button data-cmd="fx:autolevels">Tom automático</button>
+      </div>
+    </div>
+    <div class="menu"><button>Camada</button>
+      <div class="dropdown">
+        <button data-cmd="newLayer">Nova camada <kbd>Ctrl+Shift+N</kbd></button>
+        <button data-cmd="dupLayer">Duplicar / camada via cópia <kbd>Ctrl+J</kbd></button>
+        <button data-cmd="delLayer">Excluir camada</button>
+        <hr>
+        <div class="sub-title">Nova camada de ajuste</div>
+        <button data-cmd="newAdj:curves">Curvas…</button>
+        <button data-cmd="newAdj:levels">Níveis…</button>
+        <button data-cmd="newAdj:brightness">Brilho/Contraste…</button>
+        <button data-cmd="newAdj:hsl">Matiz/Saturação…</button>
+        <button data-cmd="newAdj:desaturate">Preto e branco</button>
+        <button data-cmd="newAdj:invert">Inverter</button>
+        <button data-cmd="newAdj:sepia">Sépia</button>
+        <button data-cmd="newAdj:threshold">Limiar…</button>
+        <button data-cmd="newAdj:posterize">Posterizar…</button>
+        <button data-cmd="editAdjLayer">Editar camada de ajuste…</button>
+        <hr>
+        <div class="sub-title">Máscara de camada</div>
+        <button data-cmd="addMask">Adicionar máscara (revelar tudo / seleção)</button>
+        <button data-cmd="addMaskHide">Adicionar máscara (ocultar tudo)</button>
+        <button data-cmd="editMask">Editar máscara <kbd>Ctrl+\</kbd></button>
+        <button data-cmd="editContent">Editar conteúdo <kbd>Ctrl+2</kbd></button>
+        <button data-cmd="toggleMask">Ativar/desativar máscara</button>
+        <button data-cmd="maskToSel">Carregar máscara como seleção</button>
+        <button data-cmd="applyMask">Aplicar máscara</button>
+        <button data-cmd="deleteMask">Excluir máscara</button>
+        <hr>
+        <button data-cmd="layerStyle">Estilo de camada…</button>
+        <button data-cmd="copyStyle">Copiar estilo</button>
+        <button data-cmd="pasteStyle">Colar estilo</button>
+        <button data-cmd="clearStyle">Limpar estilo</button>
+        <hr>
+        <button data-cmd="mergeDown">Mesclar abaixo <kbd>Ctrl+E</kbd></button>
+        <button data-cmd="flatten">Achatar imagem</button>
+        <hr>
+        <button data-cmd="layerUp">Trazer para frente <kbd>Ctrl+]</kbd></button>
+        <button data-cmd="layerDown">Enviar para trás <kbd>Ctrl+[</kbd></button>
+      </div>
+    </div>
+    <div class="menu"><button>Filtro</button>
+      <div class="dropdown">
+        <button data-cmd="adj:blur">Desfoque gaussiano…</button>
+        <button data-cmd="adj:sharpen">Nitidez (máscara de nitidez)…</button>
+        <button data-cmd="adj:noise">Adicionar ruído…</button>
+        <button data-cmd="adj:pixelate">Pixelizar…</button>
+        <button data-cmd="fx:emboss">Relevo</button>
+        <button data-cmd="fx:edges">Detectar bordas</button>
+      </div>
+    </div>
+    <div class="menu"><button>Exibir</button>
+      <div class="dropdown">
+        <button data-cmd="zoomIn">Aproximar <kbd>Ctrl++</kbd></button>
+        <button data-cmd="zoomOut">Afastar <kbd>Ctrl+-</kbd></button>
+        <button data-cmd="fit">Ajustar à tela <kbd>Ctrl+0</kbd></button>
+        <button data-cmd="actual">Pixels reais <kbd>Ctrl+1</kbd></button>
+      </div>
+    </div>
+  </nav>
+</header>
+
+<div id="optionsbar"></div>
+
+<main id="app">
+  <aside id="toolbar">
+    <button data-tool="move" title="Mover (V)">✥</button>
+    <button data-tool="marquee" title="Letreiro (M)">⬚</button>
+    <button data-tool="wand" title="Varinha mágica (W)">🪄</button>
+    <button data-tool="crop" title="Recortar (C)">⛶</button>
+    <button data-tool="brush" title="Pincel (B)">🖌</button>
+    <button data-tool="clone" title="Carimbo (S) · Alt+clique define a origem">⎘</button>
+    <button data-tool="spot" title="Corretivo para manchas (J) · só pintar sobre a mancha">✦</button>
+    <button data-tool="heal" title="Pincel corretivo (Shift+J) · Alt+clique define a origem">🩹</button>
+    <button data-tool="eraser" title="Borracha (E)">⌫</button>
+    <button data-tool="bucket" title="Lata de tinta (G)">🪣</button>
+    <button data-tool="gradient" title="Degradê (Shift+G)">◐</button>
+    <button data-tool="eyedropper" title="Conta-gotas (I)">💧</button>
+    <button data-tool="text" title="Texto (T)">T</button>
+    <button data-tool="hand" title="Mão (H / Espaço)">✋</button>
+    <button data-tool="zoom" title="Zoom (Z)">🔍</button>
+    <div id="swatches" title="X troca · D padrão">
+      <input type="color" id="colorFg" value="#000000" aria-label="Cor principal">
+      <input type="color" id="colorBg" value="#ffffff" aria-label="Cor secundária">
+    </div>
+  </aside>
+
+  <section id="workspace">
+    <div id="stage">
+      <canvas id="view"></canvas>
+    </div>
+    <canvas id="overlay"></canvas>
+  </section>
+
+  <aside id="panels">
+    <section class="panel">
+      <h2>Camadas</h2>
+      <div class="layer-props">
+        <select id="blendMode" aria-label="Modo de mesclagem"></select>
+        <label>Opac. <input type="range" id="layerOpacity" min="0" max="100" value="100"><span id="layerOpacityVal">100%</span></label>
+      </div>
+      <ul id="layerList"></ul>
+      <div class="panel-actions">
+        <button data-cmd="newLayer" title="Nova camada">＋</button>
+        <button data-cmd="dupLayer" title="Duplicar">⧉</button>
+        <button data-cmd="layerStyle" title="Estilo de camada" style="font-style:italic;font-weight:700">fx</button>
+        <button data-cmd="addMask" title="Adicionar máscara (usa a seleção, se houver)">◘</button>
+        <button data-cmd="newAdjPick" title="Nova camada de ajuste">◑</button>
+        <button data-cmd="layerUp" title="Subir">↑</button>
+        <button data-cmd="layerDown" title="Descer">↓</button>
+        <button data-cmd="mergeDown" title="Mesclar abaixo">⤓</button>
+        <button data-cmd="delLayer" title="Excluir">🗑</button>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>Histórico</h2>
+      <ol id="historyList"></ol>
+    </section>
+  </aside>
+</main>
+
+<footer id="statusbar">
+  <span id="stZoom">100%</span>
+  <span id="stSize">—</span>
+  <span id="stPos"></span>
+  <span id="stTarget"></span>
+  <span id="stMsg"></span>
+</footer>
+
+<div id="modal" hidden>
+  <form id="dialog" method="dialog">
+    <h3 id="dlgTitle"></h3>
+    <div id="dlgBody"></div>
+    <div class="dlg-actions">
+      <button type="button" id="dlgCancel">Cancelar</button>
+      <button type="submit" id="dlgOk" class="primary">OK</button>
+    </div>
+  </form>
+</div>
+
+<input type="file" id="fileOpen" accept="image/*" hidden>
+<input type="file" id="fileLayer" accept="image/*" hidden>
+<input type="file" id="fileProject" accept=".pview,application/json" hidden>
+
+<script src="js/filters.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>

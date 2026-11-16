@@ -1,0 +1,9 @@
+# configuração temporária de testes e arquivos locais
+.claude/
+node_modules/
+*.log
+.DS_Store
+Thumbs.db
+
+# foto de produto de terceiros (não publicar)
+anuncio/oculos-gucci.webp
