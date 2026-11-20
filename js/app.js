@@ -511,7 +511,7 @@
         const same = p && p.rev === L.rev;
         const canvas = same ? p.canvas : cloneCanvas(L.canvas);
         const mask = same ? p.mask : (L.mask ? cloneCanvas(L.mask) : null);
-        return { id: L.id, name: L.name, visible: L.visible, opacity: L.opacity, blend: L.blend, fx: L.fx || null, adj: L.adj || null, maskOn: L.maskOn, maskEdit: L.maskEdit, rev: L.rev, canvas, mask };
+        return { id: L.id, name: L.name, visible: L.visible, opacity: L.opacity, blend: L.blend, fx: L.fx || null, adj: L.adj || null, text: L.text || null, maskOn: L.maskOn, maskEdit: L.maskEdit, rev: L.rev, canvas, mask };
       }),
     };
   }
@@ -594,7 +594,7 @@
   function saveProject() {
     const data = {
       app: 'photoview', version: 1, w: doc.w, h: doc.h, active: doc.active,
-      layers: doc.layers.map(L => ({ name: L.name, visible: L.visible, opacity: L.opacity, blend: L.blend, fx: L.fx || null, adj: L.adj || null, maskOn: L.maskOn, mask: L.mask ? L.mask.toDataURL('image/png') : null, data: L.canvas.toDataURL('image/png') })),
+      layers: doc.layers.map(L => ({ name: L.name, visible: L.visible, opacity: L.opacity, blend: L.blend, fx: L.fx || null, adj: L.adj || null, text: L.text || null, maskOn: L.maskOn, mask: L.mask ? L.mask.toDataURL('image/png') : null, data: L.canvas.toDataURL('image/png') })),
     };
     download(new Blob([JSON.stringify(data)], { type: 'application/json' }), `${doc.name}.pview`);
     status('Projeto salvo');
@@ -611,7 +611,7 @@
       doc.name = baseName(file); sel = null;
       doc.layers = data.layers.map((l, i) => {
         const L = makeLayer(l.name);
-        Object.assign(L, { visible: l.visible, opacity: l.opacity, blend: l.blend, fx: l.fx || null, adj: l.adj || null, maskEdit: !!l.adj });
+        Object.assign(L, { visible: l.visible, opacity: l.opacity, blend: l.blend, fx: l.fx || null, adj: l.adj || null, text: l.text || null, maskEdit: !!l.adj });
         ctxOf(L.canvas).drawImage(imgs[i], 0, 0);
         if (masks[i]) { L.mask = newMask(false); ctxOf(L.mask).drawImage(masks[i], 0, 0); L.maskOn = l.maskOn !== false; }
         return L;
@@ -1053,7 +1053,7 @@
     }
     // máscara vinculada: transforma junto quando a camada inteira é transformada
     const mask = !onMask && !sel && L.mask ? cloneCanvas(L.mask) : null;
-    xf = { L, target, base, float, hole, mask, src: r, box: { cx: r.x + r.w / 2, cy: r.y + r.h / 2, w: r.w, h: r.h, angle: 0 }, fx: 1, fy: 1, selWas: sel };
+    xf = { L, target, base, float, hole, mask, textOk: !!(L.text && !sel && !onMask && textValid(L)), src: r, box: { cx: r.x + r.w / 2, cy: r.y + r.h / 2, w: r.w, h: r.h, angle: 0 }, fx: 1, fy: 1, selWas: sel };
     sel = null;
     renderXf(false); buildOptions(); drawOverlay();
     status('Transformação livre: arraste as alças · Enter aplica · Esc cancela');
@@ -1080,7 +1080,9 @@
     const b = xf.box, s = xf.src;
     const changed = b.angle || xf.fx < 0 || xf.fy < 0 || Math.abs(b.w - s.w) > .01 || Math.abs(b.h - s.h) > .01 || Math.abs(b.cx - (s.x + s.w / 2)) > .01 || Math.abs(b.cy - (s.y + s.h / 2)) > .01;
     if (changed) renderXf(true);
+    const xL = xf.L, xT = xL.text, asText = changed && xf.textOk && xT, M = asText ? xfMatrix(xf) : null;
     xf = null;
+    if (asText) renderTextLayer(xL, { ...xT, m: matMul(M, xT.m || IDENT) });
     if (changed) pushHistory('Transformação livre');
     buildOptions(); render();
   }
@@ -1150,6 +1152,96 @@
     octx.restore();
   }
 
+  // ---------- camadas de texto editáveis: o texto fica guardado como dados (conteúdo, fonte, cor, matriz)
+  const IDENT = [1, 0, 0, 1, 0, 0];
+  // multiplicação de matrizes 2D no formato do canvas [a b c d e f]: aplica B e depois A
+  const matMul = (A, B) => [A[0] * B[0] + A[2] * B[1], A[1] * B[0] + A[3] * B[1], A[0] * B[2] + A[2] * B[3], A[1] * B[2] + A[3] * B[3], A[0] * B[4] + A[2] * B[5] + A[4], A[1] * B[4] + A[3] * B[5] + A[5]];
+  const textFont = t => (t.bold ? 'bold ' : '') + t.size + 'px "' + t.font + '"';
+  const measureCtx = newCanvas(1, 1).getContext('2d');
+  function textMeasure(t) {
+    measureCtx.font = textFont(t);
+    const lines = t.content.split('\n');
+    return { w: Math.max(1, ...lines.map(l => measureCtx.measureText(l).width)), h: lines.length * t.size * 1.2 };
+  }
+  function drawText(c, t) {
+    c.save(); c.setTransform(...(t.m || IDENT));
+    c.font = textFont(t); c.fillStyle = t.color; c.textBaseline = 'top'; c.textAlign = 'left';
+    t.content.split('\n').forEach((ln, i) => c.fillText(ln, t.x, t.y + i * t.size * 1.2 + t.size * 0.1));
+    c.restore();
+  }
+  // redesenha a camada a partir dos dados do texto (nítido em qualquer escala ou ângulo)
+  function renderTextLayer(L, t) {
+    const m = textMeasure(t), nt = { ...t, m: t.m || IDENT.slice(), w: m.w, h: m.h };
+    const c = ctxOf(L.canvas); c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, doc.w, doc.h); c.restore();
+    drawText(c, nt); touch(L); L.text = nt;
+  }
+  // o texto só continua editável se os pixels da camada ainda são os dele (senão outra edição o rasterizou)
+  function textValid(L) {
+    const t = L.text; if (!t) return false;
+    const fresh = newCanvas(doc.w, doc.h); drawText(ctxOf(fresh), t);
+    const a = ctxOf(L.canvas).getImageData(0, 0, doc.w, doc.h).data, b = ctxOf(fresh).getImageData(0, 0, doc.w, doc.h).data;
+    let diff = 0, ink = 0;
+    for (let i = 3; i < a.length; i += 4) { if (b[i] > 8) ink++; if (Math.abs(a[i] - b[i]) > 40) diff++; }
+    return diff <= Math.max(60, ink * 0.01);
+  }
+  // camada de texto (de cima para baixo) sob o ponto, ou -1
+  function textHit(p) {
+    for (let i = doc.layers.length - 1; i >= 0; i--) {
+      const L = doc.layers[i], t = L.text;
+      if (!L.visible || !t) continue;
+      const [a, b, c, d, e, f] = t.m || IDENT, det = a * d - b * c;
+      if (!det) continue;
+      const x = (d * (p.x - e) - c * (p.y - f)) / det, y = (-b * (p.x - e) + a * (p.y - f)) / det, pad = 6 / view.zoom;
+      if (x >= t.x - pad && x <= t.x + t.w + pad && y >= t.y - pad && y <= t.y + t.h + pad) return i;
+    }
+    return -1;
+  }
+  // matriz que a transformação livre aplicou (origem → destino)
+  function xfMatrix(x) {
+    const b = x.box, s = x.src, sw = b.w / s.w, sh = b.h / s.h, co = Math.cos(b.angle), si = Math.sin(b.angle);
+    const T0 = [1, 0, 0, 1, -(s.x + s.w / 2), -(s.y + s.h / 2)], S = [x.fx * sw, 0, 0, x.fy * sh, 0, 0], R = [co, si, -si, co, 0, 0], T = [1, 0, 0, 1, b.cx, b.cy];
+    return matMul(T, matMul(R, matMul(S, T0)));
+  }
+  const TEXT_FONTS = ['Arial', 'Helvetica', 'Georgia', 'Times New Roman', 'Verdana', 'Trebuchet MS', 'Courier New', 'Impact', 'Comic Sans MS', 'system-ui'];
+  function editTextLayer(L) {
+    if (!L || !L.text) return status('A camada ativa não é de texto');
+    if (!textValid(L)) { L.text = null; refreshPanels(); return status('Este texto foi rasterizado por outra edição e não pode mais ser editado'); }
+    commitText();
+    const before = L.text, autoName = L.name === (before.content.trim().split('\n')[0].slice(0, 24) || 'Texto');
+    let ta;
+    const fonts = TEXT_FONTS.includes(before.font) ? TEXT_FONTS : [before.font, ...TEXT_FONTS];
+    const apply = v => { renderTextLayer(L, { ...before, content: v.content, font: v.font, size: v.size, bold: v.bold, color: v.color }); render(); };
+    openDialog({
+      title: 'Editar texto — ' + L.name, preview: true,
+      fields: [
+        { key: 'content', type: 'custom', value: before.content, build: (row, notify) => {
+          ta = document.createElement('textarea'); ta.value = before.content; ta.rows = 3; ta.spellcheck = false;
+          ta.style.cssText = 'width:100%;min-width:300px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:7px 9px;font:inherit;resize:vertical';
+          ta.addEventListener('input', notify); ta.addEventListener('keydown', e => e.stopPropagation());
+          row.appendChild(ta); return { get: () => ta.value };
+        } },
+        { key: 'font', label: 'Fonte', type: 'select', value: before.font, options: fonts.map(f => [f, f]) },
+        { key: 'size', label: 'Tamanho', type: 'range', min: 4, max: 600, step: 1, value: before.size },
+        { key: 'bold', label: 'Negrito', type: 'checkbox', value: before.bold },
+        { key: 'color', label: 'Cor', type: 'color', value: before.color },
+      ],
+      onInput: apply,
+      onOk: v => {
+        const t = { ...before, content: v.content.replace(/\s+$/, ''), font: v.font, size: v.size, bold: v.bold, color: v.color };
+        if (!t.content.trim()) {
+          // texto vazio: remove a camada (se não for a única)
+          if (doc.layers.length > 1) { const i = doc.layers.indexOf(L); doc.layers.splice(i, 1); doc.active = Math.max(0, Math.min(doc.active, doc.layers.length - 1)); pushHistory('Excluir texto'); render(); return; }
+          renderTextLayer(L, before); render(); return;
+        }
+        renderTextLayer(L, t);
+        if (autoName) L.name = t.content.trim().split('\n')[0].slice(0, 24) || 'Texto';
+        pushHistory('Editar texto'); render();
+      },
+      onCancel: () => { renderTextLayer(L, before); render(); },
+    });
+    setTimeout(() => ta && ta.focus(), 30);
+  }
+
   // ---------- texto
   function startText(p) {
     const ta = document.createElement('textarea');
@@ -1188,9 +1280,8 @@
     const text = ta.value;
     ta.remove();
     if (cancel || !text.trim()) return;
-    const L = makeLayer(text.trim().split('\n')[0].slice(0, 24) || 'Texto'), c = ctxOf(L.canvas), size = opts.text.size;
-    c.font = fontCss(size); c.fillStyle = fg(); c.textBaseline = 'top';
-    text.split('\n').forEach((ln, i) => c.fillText(ln, x, y + i * size * 1.2 + size * 0.1));
+    const L = makeLayer(text.trim().split('\n')[0].slice(0, 24) || 'Texto');
+    renderTextLayer(L, { content: text.replace(/\s+$/, ''), font: opts.text.font, size: opts.text.size, bold: opts.text.bold, color: fg(), x, y, m: IDENT.slice() });
     insertLayer(L); pushHistory('Texto'); render();
   }
 
@@ -1278,9 +1369,11 @@
       case 'eyedropper':
         sampleColor(p, e.altKey); drag = { tool, alt: e.altKey };
         break;
-      case 'text':
-        startText(p);
+      case 'text': {
+        const hi = textHit(p);
+        if (hi >= 0) { doc.active = hi; refreshPanels(); editTextLayer(doc.layers[hi]); } else startText(p);
         break;
+      }
       case 'crop':
         if (!crop) initCrop();
         drag = { tool, a: p, box0: { ...crop }, ...cropHit(p) };
@@ -1343,7 +1436,7 @@
       }
       case 'move': {
         const dx = Math.round(p.x - drag.a.x), dy = Math.round(p.y - drag.a.y);
-        drag.moved = drag.moved || dx !== 0 || dy !== 0;
+        drag.moved = drag.moved || dx !== 0 || dy !== 0; drag.dx = dx; drag.dy = dy;
         const c = ctxOf(drag.tc);
         c.clearRect(0, 0, doc.w, doc.h);
         if (drag.hole) c.drawImage(drag.hole, 0, 0);
@@ -1471,7 +1564,11 @@
         drawOverlay();
         break;
       case 'move':
-        if (d.moved) { touch(active()); pushHistory('Mover'); }
+        if (d.moved) {
+          const L = active(); touch(L);
+          if (L.text && d.tc === L.canvas && !d.sel0) L.text = { ...L.text, m: matMul([1, 0, 0, 1, d.dx || 0, d.dy || 0], L.text.m || IDENT) };
+          pushHistory('Mover');
+        }
         break;
       case 'crop':
         if (d.mode === 'rotate') buildOptions(); // atualiza o controle de ângulo
@@ -1802,7 +1899,7 @@
       const nc = newCanvas(nw, nh), c = ctxOf(nc);
       c.imageSmoothingQuality = 'high';
       draw(c, L.canvas);
-      L.canvas = nc;
+      L.canvas = nc; L.text = null; // rotacionar/redimensionar o documento rasteriza o texto
       if (L.mask) {
         // área nova da máscara fica visível (branca), como "revelar tudo"
         const nm = newCanvas(nw, nh), mc = ctxOf(nm);
@@ -1964,7 +2061,7 @@
       const N = makeLayer(r ? `${L.name} (cópia da seleção)` : `${L.name} cópia`);
       const c = ctxOf(N.canvas);
       withSel(c, x => x.drawImage(L.canvas, 0, 0));
-      if (!r) Object.assign(N, { opacity: L.opacity, blend: L.blend, visible: L.visible, fx: L.fx || null, adj: L.adj || null, mask: L.mask ? cloneCanvas(L.mask) : null, maskOn: L.maskOn, maskEdit: L.maskEdit });
+      if (!r) Object.assign(N, { opacity: L.opacity, blend: L.blend, visible: L.visible, fx: L.fx || null, adj: L.adj || null, text: L.text || null, mask: L.mask ? cloneCanvas(L.mask) : null, maskOn: L.maskOn, maskEdit: L.maskEdit });
       insertLayer(N); pushHistory(r ? 'Camada via cópia' : 'Duplicar camada'); render();
     },
     delLayer: () => {
@@ -1989,7 +2086,7 @@
           c.save(); c.globalAlpha = L.opacity; c.globalCompositeOperation = L.blend === 'source-over' ? 'source-atop' : L.blend; c.drawImage(t, 0, 0); c.restore();
         }
       } else if (L.visible) { c.save(); c.globalAlpha = L.opacity; c.globalCompositeOperation = L.blend; c.drawImage(layerRender(L), 0, 0); c.restore(); }
-      touch(B);
+      touch(B); B.text = null;
       doc.layers.splice(doc.active, 1); doc.active--;
       pushHistory('Mesclar abaixo'); render();
     },
@@ -2069,6 +2166,7 @@
     editMask: () => { const L = active(); if (!L.mask) return commands.addMask(); L.maskEdit = true; refreshPanels(); },
     editContent: () => { if (active().adj) return status('Camada de ajuste: só a máscara é editável'); active().maskEdit = false; refreshPanels(); },
     cropTool: () => setTool('crop'),
+    editText: () => editTextLayer(active()),
     freeTransform: () => startTransform(),
     newAdjPick: () => openDialog({
       title: 'Nova camada de ajuste', okLabel: 'Criar',
@@ -2158,7 +2256,7 @@
       meta.textContent = (hasFx(L) ? 'fx ' : '') + (L.opacity < 1 ? Math.round(L.opacity * 100) + '%' : '');
       meta.title = hasFx(L) ? 'Clique duas vezes na miniatura para editar o estilo' : '';
       th.title = 'Conteúdo da camada · duplo clique: estilos de camada';
-      th.ondblclick = e => { e.stopPropagation(); L.adj ? editAdj(L, false) : run('layerStyle'); };
+      th.ondblclick = e => { e.stopPropagation(); L.adj ? editAdj(L, false) : L.text ? editTextLayer(L) : run('layerStyle'); };
       li.append(eye, th);
       let mt = null;
       if (L.mask) {
@@ -2321,7 +2419,7 @@
         n.oninput = () => { o.size = Math.max(4, +n.value || 4); restyle(); };
         l.appendChild(n); bar.appendChild(l);
         check('Negrito', 'bold', restyle);
-        hint('Clique na imagem para digitar · Ctrl+Enter confirma · Esc cancela');
+        hint('Clique na imagem para digitar · Ctrl+Enter confirma · Esc cancela · clique num texto existente para editar');
         break;
       }
       case 'crop': {
