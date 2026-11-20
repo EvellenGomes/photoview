@@ -1405,6 +1405,33 @@
     drawOverlay();
   }
 
+  /* Refinar seleção: suaviza (desfoque + limiar, arredonda cantos e remove serrilhado) e depois
+     expande ou contrai por distância euclidiana. Só processa uma janela em volta da seleção. */
+  function refineMask(baseCv, smooth, grow) {
+    const w = doc.w, h = doc.h, b = selBounds();
+    if (!b) return null;
+    const m = Math.ceil(Math.max(Math.abs(grow), smooth * 3) + 6);
+    const x0 = Math.max(0, b.x - m), y0 = Math.max(0, b.y - m), x1 = Math.min(w, b.x + b.w + m), y1 = Math.min(h, b.y + b.h + m);
+    const W = x1 - x0, H = y1 - y0, n = W * H;
+    const d = ctxOf(baseCv).getImageData(x0, y0, W, H).data;
+    let inside = new Uint8Array(n);
+    for (let p = 0; p < n; p++) inside[p] = d[p * 4 + 3] >= 128 ? 1 : 0;
+    if (smooth > 0.3) {
+      const f = new Float32Array(n);
+      for (let p = 0; p < n; p++) f[p] = inside[p] * 255;
+      blurFloat(f, W, H, smooth);
+      for (let p = 0; p < n; p++) inside[p] = f[p] >= 127.5 ? 1 : 0;
+    }
+    if (Math.abs(grow) >= 0.5) {
+      const r = Math.abs(grow);
+      if (grow > 0) { const dist = edt(inside, W, H); for (let p = 0; p < n; p++) inside[p] = dist[p] <= r ? 1 : 0; }
+      else { const out = new Uint8Array(n); for (let p = 0; p < n; p++) out[p] = 1 - inside[p]; const dist = edt(out, W, H); for (let p = 0; p < n; p++) inside[p] = inside[p] && dist[p] > r ? 1 : 0; }
+    }
+    const mask = new Uint8Array(w * h);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) if (inside[y * W + x]) mask[(y0 + y) * w + x0 + x] = 1;
+    return maskSel(maskToCanvas(mask));
+  }
+
   // fecha o laço: preenche o polígono e combina com a seleção conforme o modo
   function finishLasso() {
     if (!lasso) return;
@@ -1839,6 +1866,22 @@
     redo: () => goHistory(history.index + 1),
     selectAll: () => { sel = { type: 'rect', x: 0, y: 0, w: doc.w, h: doc.h }; drawOverlay(); },
     deselect: () => { sel = null; drawOverlay(); },
+    refineSel: () => {
+      if (!sel) return status('Faça uma seleção primeiro');
+      const base = sel, baseCv = selMaskCanvas();
+      let timer;
+      const apply = v => { const r = refineMask(baseCv, v.smooth, v.grow); sel = r || base; drawOverlay(); };
+      openDialog({
+        title: 'Refinar seleção', preview: true,
+        fields: [
+          { key: 'smooth', label: 'Suavizar (px)', type: 'range', min: 0, max: 40, step: 0.5, value: 0 },
+          { key: 'grow', label: 'Expandir (+) / contrair (−)', type: 'range', min: -60, max: 60, step: 1, value: 0 },
+        ],
+        onInput: v => { clearTimeout(timer); timer = setTimeout(() => apply(v), 30); },
+        onOk: v => { clearTimeout(timer); apply(v); status(sel ? 'Seleção: ' + sel.w + ' × ' + sel.h + ' px' : 'A seleção ficou vazia'); },
+        onCancel: () => { clearTimeout(timer); sel = base; drawOverlay(); },
+      });
+    },
     invertSel: () => {
       const c = newCanvas(doc.w, doc.h), x = c.getContext('2d');
       x.fillStyle = '#fff'; x.fillRect(0, 0, doc.w, doc.h);
@@ -2351,6 +2394,7 @@
       else if (k === 'a') cmd = 'selectAll';
       else if (k === 'd') cmd = 'deselect';
       else if (k === 'i') cmd = e.altKey ? 'imageSize' : e.shiftKey ? 'invertSel' : 'fx:invert';
+      else if (k === 'r' && e.altKey) cmd = 'refineSel';
       else if (k === 'c') cmd = e.altKey ? 'canvasSize' : (window.getSelection().toString() ? null : 'copy');
       else if (k === 'u') cmd = e.shiftKey ? 'fx:desaturate' : 'adj:hsl';
       else if (k === 'l') cmd = 'adj:levels';

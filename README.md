@@ -21,7 +21,7 @@ Editor de imagens web no estilo Photoshop, feito com HTML, CSS e JavaScript puro
 - Transformação livre (Editar › Transformação livre ou Ctrl+Alt+T): escalar pelos cantos mantendo a proporção (Shift solta, Alt a partir do centro), girar arrastando fora da caixa (Shift = 15°), mover, setas, espelhar, valores em % e graus; vale para a camada, a seleção ou a máscara; a máscara vinculada acompanha; imagens inseridas maiores que o documento entram reduzidas para caber
 - Ferramenta Recortar (C): caixa com alças, regra dos terços, proporções (livre, original, 1:1, 4:5, 4:3, 3:2, 16:9, 9:16), girar caixa, endireitar (arrastar fora da caixa ou controle de ângulo; a caixa encolhe para não sobrar canto vazio), Enter aplica, Esc cancela
 - Imagem: tamanho da imagem, tamanho da tela (com âncora), cortar na seleção, girar, espelhar
-- Seleção: modos nova/adicionar (Shift)/subtrair (Alt)/interseção (Shift+Alt), inverter (Ctrl+Shift+I); pincel, filtros, preencher, mover e copiar respeitam a seleção
+- Seleção: modos nova/adicionar (Shift)/subtrair (Alt)/interseção (Shift+Alt), inverter (Ctrl+Shift+I), refinar seleção (Ctrl+Alt+R: suavizar, expandir e contrair com prévia); pincel, filtros, preencher, mover e copiar respeitam a seleção
 - Histórico com painel (até 40 passos), desfazer/refazer
 - Abrir imagem, colar (Ctrl+V), arrastar arquivo, exportar PNG/JPEG/WebP, salvar/abrir projeto `.pview` com camadas
 
