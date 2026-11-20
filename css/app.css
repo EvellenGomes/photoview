@@ -148,3 +148,7 @@ input[type=range] { accent-color: var(--accent); }
 #layerList li.group .name { font-weight: 600; }
 #layerList li.multi:not(.active) { background: rgba(59,130,246,.12); }
 #layerList .fold { width: 16px; border: 0; background: none; color: var(--muted); padding: 0; font-size: 12px; }
+
+/* máscara de recorte */
+#layerList li.clipped { border-left: 2px solid var(--accent); }
+#layerList .clipmark { color: var(--accent); font-size: 13px; width: 12px; }

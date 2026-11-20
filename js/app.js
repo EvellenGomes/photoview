@@ -30,10 +30,11 @@
   const strokeCv = newCanvas(1, 1), scratch = newCanvas(1, 1), maskTmp = newCanvas(1, 1), maskPrev = newCanvas(1, 1);
   const clonePaint = newCanvas(1, 1), cloneOut = newCanvas(1, 1); // carimbo: origem deslocada e resultado recortado
   const adjTmp = newCanvas(1, 1); // camada de ajuste já recortada pela máscara
+  const clipA = newCanvas(1, 1), clipB = newCanvas(1, 1), clipC = newCanvas(1, 1); // máscara de recorte: grupo, alfa da base, camada recortada
 
   function setDocSize(w, h) {
     doc.w = w; doc.h = h;
-    for (const c of [viewCv, strokeCv, scratch, maskTmp, maskPrev, clonePaint, cloneOut, adjTmp]) { c.width = w; c.height = h; }
+    for (const c of [viewCv, strokeCv, scratch, maskTmp, maskPrev, clonePaint, cloneOut, adjTmp, clipA, clipB, clipC]) { c.width = w; c.height = h; }
     stage.style.width = w + 'px'; stage.style.height = h + 'px';
     $('#stSize').textContent = `${w} × ${h} px`;
     if (typeof tool !== 'undefined' && tool === 'crop') initCrop(); // documento mudou: caixa volta ao tamanho todo
@@ -238,7 +239,19 @@
     normalizeGroups();
   }
 
-  const layerSig = L => `${L.id}.${L.rev}.${+effVisible(L)}.${effOpacity(L)}.${L.blend}.${+L.maskOn}.${L.fx ? JSON.stringify(L.fx) : ''}.${L.adj ? JSON.stringify(L.adj) : ''}|`;
+  // Máscara de recorte: camada com clip:true só aparece onde a camada-base (a primeira não recortada logo abaixo,
+  // no mesmo grupo) tem pixels. Devolve o índice da base ou -1.
+  function clipBase(i) {
+    const L = doc.layers[i];
+    if (!L || !L.clip || L.group) return -1;
+    for (let j = i - 1; j >= 0; j--) {
+      const B = doc.layers[j];
+      if (pidOf(B) !== pidOf(L) || B.group || B.adj) return -1;
+      if (!B.clip) return j;
+    }
+    return -1;
+  }
+  const layerSig = L => `${L.id}.${L.rev}.${+!!L.clip}.${+effVisible(L)}.${effOpacity(L)}.${L.blend}.${+L.maskOn}.${L.fx ? JSON.stringify(L.fx) : ''}.${L.adj ? JSON.stringify(L.adj) : ''}|`;
   // ajuste aplicado sobre tudo o que está abaixo (lido do próprio canvas de destino)
   function adjustedBelow(ctx, L, sig, liveBelow) {
     const useCache = ctx.canvas === viewCv, c = L._adjC, now = performance.now();
@@ -263,28 +276,9 @@
     if (clear) ctx.clearRect(0, 0, doc.w, doc.h);
     if (withStroke && stroke) maskStroke();
     let sig = `${doc.w}x${doc.h}|`, liveBelow = false;
-    doc.layers.forEach((L, i) => {
-      if (i >= upTo) return;
-      if (L.group) { sig += layerSig(L); return; } // cabeçalho de grupo não desenha nada
-      const live = withStroke && stroke && i === doc.active;
-      if (L.adj) {
-        if (effVisible(L)) {
-          const adjusted = adjustedBelow(ctx, L, sig + layerSig(L), liveBelow);
-          const t = adjTmp.getContext('2d');
-          t.globalCompositeOperation = 'source-over'; t.clearRect(0, 0, doc.w, doc.h); t.drawImage(adjusted, 0, 0);
-          if (L.mask && L.maskOn) { t.globalCompositeOperation = 'destination-in'; t.drawImage(live && stroke.onMask ? liveMask(L) : L.mask, 0, 0); }
-          t.globalCompositeOperation = 'source-over';
-          ctx.globalAlpha = effOpacity(L);
-          // "source-atop" troca as cores sem mexer na transparência do que está abaixo
-          ctx.globalCompositeOperation = L.blend === 'source-over' ? 'source-atop' : L.blend;
-          ctx.drawImage(adjTmp, 0, 0);
-        }
-        sig += layerSig(L) + (live ? `live${performance.now()}` : '');
-        return;
-      }
-      sig += layerSig(L);
-      if (live) { liveBelow = true; sig += `live${performance.now()}`; }
-      if (!effVisible(L)) return;
+    const layers = doc.layers;
+    // pixels finais de uma camada comum (máscara e estilo aplicados); durante o traço mostra a prévia ao vivo
+    const sourceOf = (L, live) => {
       let src;
       if (live) {
         // camada sendo editada agora: monta a prévia sem cache
@@ -311,9 +305,61 @@
         }
         if (hasFx(L)) src = styled(L, src, true);
       } else src = layerRender(L);
-      ctx.globalAlpha = effOpacity(L);
-      ctx.globalCompositeOperation = L.blend;
-      ctx.drawImage(src, 0, 0);
+      return src;
+    };
+    layers.forEach((L, i) => {
+      if (i >= upTo) return;
+      if (L.group) { sig += layerSig(L); return; } // cabeçalho de grupo não desenha nada
+      const live = withStroke && stroke && i === doc.active;
+      const clipped = L.clip && clipBase(i) >= 0; // desenhada junto com a camada-base
+      if (L.adj) {
+        if (!clipped && effVisible(L)) {
+          const adjusted = adjustedBelow(ctx, L, sig + layerSig(L), liveBelow);
+          const t = adjTmp.getContext('2d');
+          t.globalCompositeOperation = 'source-over'; t.clearRect(0, 0, doc.w, doc.h); t.drawImage(adjusted, 0, 0);
+          if (L.mask && L.maskOn) { t.globalCompositeOperation = 'destination-in'; t.drawImage(live && stroke.onMask ? liveMask(L) : L.mask, 0, 0); }
+          t.globalCompositeOperation = 'source-over';
+          ctx.globalAlpha = effOpacity(L);
+          // "source-atop" troca as cores sem mexer na transparência do que está abaixo
+          ctx.globalCompositeOperation = L.blend === 'source-over' ? 'source-atop' : L.blend;
+          ctx.drawImage(adjTmp, 0, 0);
+        }
+        sig += layerSig(L) + (live ? `live${performance.now()}` : '');
+        return;
+      }
+      sig += layerSig(L);
+      if (live) { liveBelow = true; sig += `live${performance.now()}`; }
+      if (clipped || !effVisible(L)) return;
+      // camadas recortadas logo acima desta (mesmo grupo)
+      const clips = [];
+      for (let j = i + 1; j < layers.length && j < upTo; j++) { const C = layers[j]; if (!C.clip || C.group || pidOf(C) !== pidOf(L)) break; clips.push(C); }
+      if (!clips.length) {
+        ctx.globalAlpha = effOpacity(L);
+        ctx.globalCompositeOperation = L.blend;
+        ctx.drawImage(sourceOf(L, live), 0, 0);
+        return;
+      }
+      // grupo de recorte: a base + as camadas recortadas (só aparecem onde a base tem pixels) viram uma imagem só
+      const baseSrc = sourceOf(L, live), w = doc.w, h = doc.h;
+      const t = clipA.getContext('2d'), bm = clipB.getContext('2d'), o = clipC.getContext('2d');
+      for (const c of [t, bm]) { c.globalAlpha = 1; c.globalCompositeOperation = 'source-over'; c.clearRect(0, 0, w, h); c.drawImage(baseSrc, 0, 0); }
+      for (const C of clips) {
+        if (!C.visible) continue;
+        const liveC = withStroke && stroke && layers.indexOf(C) === doc.active;
+        o.globalAlpha = 1; o.globalCompositeOperation = 'source-over'; o.clearRect(0, 0, w, h);
+        if (C.adj) { // ajuste recortado: muda as cores só dentro da base
+          const img = t.getImageData(0, 0, w, h); Filters[C.adj.name](img, C.adj.vals || {}); o.putImageData(img, 0, 0);
+          if (C.mask && C.maskOn) { o.globalCompositeOperation = 'destination-in'; o.drawImage(liveC && stroke.onMask ? liveMask(C) : C.mask, 0, 0); }
+          t.globalAlpha = C.opacity; t.globalCompositeOperation = C.blend === 'source-over' ? 'source-atop' : C.blend;
+        } else {
+          o.drawImage(sourceOf(C, liveC), 0, 0);
+          o.globalCompositeOperation = 'destination-in'; o.drawImage(clipB, 0, 0);
+          t.globalAlpha = C.opacity; t.globalCompositeOperation = C.blend;
+        }
+        t.drawImage(clipC, 0, 0);
+      }
+      t.globalAlpha = 1; t.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = effOpacity(L); ctx.globalCompositeOperation = L.blend; ctx.drawImage(clipA, 0, 0);
     });
     ctx.globalAlpha = 1; ctx.globalCompositeOperation = 'source-over';
   }
@@ -558,7 +604,7 @@
         const same = p && p.rev === L.rev;
         const canvas = same ? p.canvas : cloneCanvas(L.canvas);
         const mask = same ? p.mask : (L.mask ? cloneCanvas(L.mask) : null);
-        return { id: L.id, name: L.name, visible: L.visible, opacity: L.opacity, blend: L.blend, fx: L.fx || null, adj: L.adj || null, text: L.text || null, group: !!L.group, pid: L.pid || 0, collapsed: !!L.collapsed, maskOn: L.maskOn, maskEdit: L.maskEdit, rev: L.rev, canvas, mask };
+        return { id: L.id, name: L.name, visible: L.visible, opacity: L.opacity, blend: L.blend, fx: L.fx || null, adj: L.adj || null, text: L.text || null, group: !!L.group, pid: L.pid || 0, collapsed: !!L.collapsed, clip: !!L.clip, maskOn: L.maskOn, maskEdit: L.maskEdit, rev: L.rev, canvas, mask };
       }),
     };
   }
@@ -641,7 +687,7 @@
   function saveProject() {
     const data = {
       app: 'photoview', version: 1, w: doc.w, h: doc.h, active: doc.active,
-      layers: doc.layers.map(L => ({ name: L.name, visible: L.visible, opacity: L.opacity, blend: L.blend, fx: L.fx || null, adj: L.adj || null, text: L.text || null, id: L.id, group: !!L.group, pid: L.pid || 0, collapsed: !!L.collapsed, maskOn: L.maskOn, mask: L.mask ? L.mask.toDataURL('image/png') : null, data: L.canvas.toDataURL('image/png') })),
+      layers: doc.layers.map(L => ({ name: L.name, visible: L.visible, opacity: L.opacity, blend: L.blend, fx: L.fx || null, adj: L.adj || null, text: L.text || null, id: L.id, group: !!L.group, pid: L.pid || 0, collapsed: !!L.collapsed, clip: !!L.clip, maskOn: L.maskOn, mask: L.mask ? L.mask.toDataURL('image/png') : null, data: L.canvas.toDataURL('image/png') })),
     };
     download(new Blob([JSON.stringify(data)], { type: 'application/json' }), `${doc.name}.pview`);
     status('Projeto salvo');
@@ -658,7 +704,7 @@
       doc.name = baseName(file); sel = null;
       doc.layers = data.layers.map((l, i) => {
         const L = makeLayer(l.name);
-        Object.assign(L, { visible: l.visible, opacity: l.opacity, blend: l.blend, fx: l.fx || null, adj: l.adj || null, text: l.text || null, maskEdit: !!l.adj, group: !!l.group, collapsed: !!l.collapsed, _oid: l.id, _opid: l.pid || 0 });
+        Object.assign(L, { visible: l.visible, opacity: l.opacity, blend: l.blend, fx: l.fx || null, adj: l.adj || null, text: l.text || null, maskEdit: !!l.adj, group: !!l.group, collapsed: !!l.collapsed, clip: !!l.clip, _oid: l.id, _opid: l.pid || 0 });
         if (l.group) L.canvas = newCanvas(1, 1);
         ctxOf(L.canvas).drawImage(imgs[i], 0, 0);
         if (masks[i]) { L.mask = newMask(false); ctxOf(L.mask).drawImage(masks[i], 0, 0); L.maskOn = l.maskOn !== false; }
@@ -2133,7 +2179,7 @@
         const block = blockOf(L), map = new Map();
         const copies = block.map(o => {
           const N = makeLayer(o === L ? o.name + ' cópia' : o.name, o.group ? newCanvas(1, 1) : cloneCanvas(o.canvas));
-          Object.assign(N, { opacity: o.opacity, blend: o.blend, visible: o.visible, fx: o.fx || null, adj: o.adj || null, text: o.text || null, mask: o.mask ? cloneCanvas(o.mask) : null, maskOn: o.maskOn, maskEdit: false, group: !!o.group, collapsed: !!o.collapsed });
+          Object.assign(N, { opacity: o.opacity, blend: o.blend, visible: o.visible, fx: o.fx || null, adj: o.adj || null, text: o.text || null, mask: o.mask ? cloneCanvas(o.mask) : null, maskOn: o.maskOn, maskEdit: false, group: !!o.group, collapsed: !!o.collapsed, clip: !!o.clip });
           map.set(o.id, N); return N;
         });
         copies.forEach((N, k) => { const o = block[k]; N.pid = o === L ? pidOf(L) : map.get(o.pid).id; });
@@ -2145,7 +2191,7 @@
       const N = makeLayer(r ? `${L.name} (cópia da seleção)` : `${L.name} cópia`);
       const c = ctxOf(N.canvas);
       withSel(c, x => x.drawImage(L.canvas, 0, 0));
-      if (!r) Object.assign(N, { opacity: L.opacity, blend: L.blend, visible: L.visible, fx: L.fx || null, adj: L.adj || null, text: L.text || null, mask: L.mask ? cloneCanvas(L.mask) : null, maskOn: L.maskOn, maskEdit: L.maskEdit });
+      if (!r) Object.assign(N, { opacity: L.opacity, blend: L.blend, visible: L.visible, fx: L.fx || null, adj: L.adj || null, text: L.text || null, clip: !!L.clip, mask: L.mask ? cloneCanvas(L.mask) : null, maskOn: L.maskOn, maskEdit: L.maskEdit });
       insertLayer(N); pushHistory(r ? 'Camada via cópia' : 'Duplicar camada'); render();
     },
     delLayer: () => {
@@ -2180,7 +2226,14 @@
           if (L.mask && L.maskOn) { tc.globalCompositeOperation = 'destination-in'; tc.drawImage(L.mask, 0, 0); }
           c.save(); c.globalAlpha = L.opacity; c.globalCompositeOperation = L.blend === 'source-over' ? 'source-atop' : L.blend; c.drawImage(t, 0, 0); c.restore();
         }
-      } else if (L.visible) { c.save(); c.globalAlpha = L.opacity; c.globalCompositeOperation = L.blend; c.drawImage(layerRender(L), 0, 0); c.restore(); }
+      } else if (L.visible) {
+        let src = layerRender(L);
+        if (L.clip) { // recortada: só vale onde a base tem pixels
+          const t = newCanvas(doc.w, doc.h), tc = t.getContext('2d');
+          tc.drawImage(src, 0, 0); tc.globalCompositeOperation = 'destination-in'; tc.drawImage(B.canvas, 0, 0); src = t;
+        }
+        c.save(); c.globalAlpha = L.opacity; c.globalCompositeOperation = L.blend; c.drawImage(src, 0, 0); c.restore();
+      }
       touch(B); B.text = null;
       doc.layers.splice(doc.active, 1); doc.active--;
       pushHistory('Mesclar abaixo'); render();
@@ -2300,6 +2353,14 @@
       else { const parent = groupById(pidOf(A)); if (!parent) return; placeBlock(block, parent, false); } // era o fundo do grupo: sai dele
       doc.active = doc.layers.indexOf(A); pushHistory('Reordenar camada'); render();
     },
+    clipMask: () => {
+      const L = active();
+      if (L.group) return status('Grupos não podem ser recortados');
+      if (L.clip) { L.clip = false; pushHistory('Soltar máscara de recorte'); render(); return; }
+      L.clip = true;
+      if (clipBase(doc.active) < 0) { L.clip = false; return status('Precisa de uma camada comum logo abaixo, no mesmo grupo, para recortar'); }
+      pushHistory('Criar máscara de recorte'); render();
+    },
     groupLayers: () => {
       commitText();
       const sels = selectedLayers();
@@ -2369,7 +2430,10 @@
       if (hiddenByCollapse(L)) continue;
       const li = document.createElement('li');
       li.className = (i === doc.active ? 'active' : '') + (L.group ? ' group' : '') + (multi.has(L.id) ? ' multi' : '');
-      li.style.paddingLeft = (8 + depthOf(L) * 16) + 'px';
+      const isClip = L.clip && clipBase(i) >= 0;
+      if (isClip) li.className += ' clipped';
+      li.style.paddingLeft = (8 + depthOf(L) * 16 + (isClip ? 14 : 0)) + 'px';
+      if (isClip) { const m = document.createElement('span'); m.className = 'clipmark'; m.textContent = '↳'; m.title = 'Recortada pela camada de baixo'; li.appendChild(m); }
       li.draggable = true;
       if (L.group) {
         const f = document.createElement('button'); f.className = 'fold'; f.textContent = L.collapsed ? '▸' : '▾'; f.title = 'Recolher / expandir';
@@ -2424,6 +2488,7 @@
       li.append(name, meta);
       li.onclick = e => {
         if (xf) applyTransform();
+        if (e.altKey) { doc.active = i; run('clipMask'); return; } // Alt+clique: cria/solta a máscara de recorte
         if (e.ctrlKey || e.metaKey) { // Ctrl+clique: soma/tira da seleção múltipla
           if (!multi.size) multi.add(doc.layers[doc.active].id);
           if (multi.has(L.id)) multi.delete(L.id); else multi.add(L.id);
@@ -2649,7 +2714,7 @@
       else if (k === 's') cmd = 'saveProject';
       else if (k === 'e') cmd = e.shiftKey ? 'exportPNG' : 'mergeDown';
       else if (k === 'j') cmd = 'dupLayer';
-      else if (k === 'g') cmd = e.shiftKey ? 'ungroup' : 'groupLayers';
+      else if (k === 'g') cmd = e.shiftKey ? 'ungroup' : e.altKey ? 'clipMask' : 'groupLayers';
       else if (k === 'n' && e.shiftKey) cmd = 'newLayer';
       else if (k === 'a') cmd = 'selectAll';
       else if (k === 'd') cmd = 'deselect';
