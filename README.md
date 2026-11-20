@@ -30,7 +30,7 @@ Editor de imagens web no estilo Photoshop, feito com HTML, CSS e JavaScript puro
 - Imagem: tamanho da imagem, tamanho da tela (com âncora), cortar na seleção, girar, espelhar
 - Seleção: modos nova/adicionar (Shift)/subtrair (Alt)/interseção (Shift+Alt), inverter (Ctrl+Shift+I), refinar seleção (Ctrl+Alt+R: suavizar, expandir e contrair com prévia); pincel, filtros, preencher, mover e copiar respeitam a seleção
 - Histórico com painel (até 40 passos), desfazer/refazer
-- Abrir imagem, colar (Ctrl+V), arrastar arquivo, exportar PNG/JPEG/WebP, salvar/abrir projeto `.pview` com camadas
+- Abrir imagem, colar (Ctrl+V), arrastar arquivo, exportar PNG/JPEG/WebP (rápido) ou “Exportar como…” (Ctrl+Alt+E: formato, qualidade, escala e fundo, com prévia da imagem e de um detalhe a 100% e o tamanho do arquivo ao vivo), salvar/abrir projeto `.pview` com camadas
 
 ## Arquivos
 - `index.html` – layout e menus

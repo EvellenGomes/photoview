@@ -842,6 +842,79 @@
     composite(x, false, false);
     return c;
   }
+  // ---------- Exportar como…: formato, qualidade, escala e fundo, com prévia e tamanho do arquivo
+  const formatBytes = n => n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(n < 10240 ? 1 : 0) + ' KB' : (n / 1048576).toFixed(2) + ' MB';
+  const EXPORT_TYPES = { png: 'image/png', jpeg: 'image/jpeg', webp: 'image/webp' };
+  function exportDialog() {
+    commitText();
+    const base = flattenCanvas(null); // composição com transparência, calculada uma vez
+    const MAX_PIXELS = 36e6;
+    async function encode(v) {
+      let k = v.scale / 100;
+      if (doc.w * doc.h * k * k > MAX_PIXELS) k = Math.sqrt(MAX_PIXELS / (doc.w * doc.h)); // proteção contra imagens enormes
+      const w = Math.max(1, Math.round(doc.w * k)), h = Math.max(1, Math.round(doc.h * k));
+      const c = newCanvas(w, h), x = c.getContext('2d');
+      x.imageSmoothingEnabled = true; x.imageSmoothingQuality = 'high';
+      let bgc = v.bg; if (v.format === 'jpeg' && bgc === 'transparent') bgc = 'white'; // JPEG não tem transparência
+      if (bgc !== 'transparent') { x.fillStyle = bgc === 'white' ? '#ffffff' : bgc === 'black' ? '#000000' : bg(); x.fillRect(0, 0, w, h); }
+      x.drawImage(base, 0, 0, w, h);
+      const type = EXPORT_TYPES[v.format];
+      const blob = await new Promise(r => c.toBlob(r, type, v.quality / 100));
+      return { blob, w, h, type, key: JSON.stringify([v.format, v.quality, v.scale, v.bg]) };
+    }
+    let pv = null, timer = null, token = 0, last = null;
+    const draw = async res => {
+      const bmp = await createImageBitmap(res.blob), A = pv.a, B = pv.b, ca = A.getContext('2d'), cb = B.getContext('2d');
+      ca.clearRect(0, 0, A.width, A.height); cb.clearRect(0, 0, B.width, B.height);
+      const k = Math.min(A.width / bmp.width, A.height / bmp.height), dw = bmp.width * k, dh = bmp.height * k;
+      ca.imageSmoothingQuality = 'high'; ca.drawImage(bmp, (A.width - dw) / 2, (A.height - dh) / 2, dw, dh);
+      // detalhe a 100% do centro da imagem exportada, para julgar a compressão
+      const sw = Math.min(B.width, bmp.width), sh = Math.min(B.height, bmp.height);
+      cb.drawImage(bmp, (bmp.width - sw) / 2, (bmp.height - sh) / 2, sw, sh, (B.width - sw) / 2, (B.height - sh) / 2, sw, sh);
+      bmp.close && bmp.close();
+    };
+    const refresh = v => {
+      clearTimeout(timer);
+      pv.info.textContent = 'Calculando…';
+      timer = setTimeout(async () => {
+        const my = ++token, res = await encode(v);
+        if (my !== token) return;
+        if (!res.blob) { pv.info.textContent = 'Este navegador não consegue gerar esse formato'; return; }
+        last = res; await draw(res);
+        pv.info.textContent = res.w + ' × ' + res.h + ' px · ' + formatBytes(res.blob.size) + (v.scale !== 100 ? ' · escala ' + v.scale + '%' : '');
+        pv.q.style.opacity = v.format === 'png' ? 0.4 : 1;
+      }, 180);
+    };
+    openDialog({
+      title: 'Exportar como…', okLabel: 'Exportar',
+      fields: [
+        { key: 'format', label: 'Formato', type: 'select', value: 'png', options: [['png', 'PNG (sem perdas, com transparência)'], ['jpeg', 'JPEG (arquivo menor, sem transparência)'], ['webp', 'WebP (arquivo menor, com transparência)']] },
+        { key: 'quality', label: 'Qualidade', type: 'range', min: 1, max: 100, step: 1, value: 90 },
+        { key: 'scale', label: 'Escala %', type: 'range', min: 5, max: 300, step: 1, value: 100 },
+        { key: 'bg', label: 'Fundo', type: 'select', value: 'transparent', options: [['transparent', 'Transparente (PNG/WebP)'], ['white', 'Branco'], ['black', 'Preto'], ['secondary', 'Cor secundária']] },
+        { key: 'preview', type: 'custom', value: null, build: row => {
+          const wrap = document.createElement('div'); wrap.className = 'export-prev';
+          const a = document.createElement('canvas'), b = document.createElement('canvas'), info = document.createElement('div');
+          a.width = 230; a.height = 170; b.width = 230; b.height = 170; a.title = 'Imagem inteira'; b.title = 'Detalhe a 100% (centro)';
+          info.className = 'export-info'; info.textContent = 'Calculando…';
+          const cap = document.createElement('div'); cap.className = 'export-cap'; cap.innerHTML = '<span>Imagem inteira</span><span>Detalhe a 100%</span>';
+          wrap.append(a, b, cap, info); row.appendChild(wrap);
+          pv = { a, b, info, q: document.getElementById('dlg_quality') };
+          return { get: () => null };
+        } },
+      ],
+      onInput: v => refresh(v),
+      onOk: async v => {
+        let res = last && last.key === JSON.stringify([v.format, v.quality, v.scale, v.bg]) ? last : await encode(v);
+        if (!res.blob) return status('Este navegador não consegue gerar esse formato');
+        const ext = v.format === 'jpeg' ? 'jpg' : v.format;
+        download(res.blob, doc.name + (v.scale !== 100 ? '-' + res.w + 'x' + res.h : '') + '.' + ext);
+        status('Exportado ' + ext.toUpperCase() + ' · ' + res.w + ' × ' + res.h + ' px · ' + formatBytes(res.blob.size));
+      },
+      onCancel: () => { token++; },
+    });
+    refresh({ format: 'png', quality: 90, scale: 100, bg: 'transparent' });
+  }
   function exportAs(type, ext) {
     const c = flattenCanvas(type === 'image/jpeg' ? '#ffffff' : null);
     c.toBlob(b => { if (b) { download(b, `${doc.name}.${ext}`); status(`Exportado ${ext.toUpperCase()}`); } else status('Formato não suportado pelo navegador'); }, type, 0.92);
@@ -2619,6 +2692,7 @@
     openLayer: () => $('#fileLayer').click(),
     openProject: () => $('#fileProject').click(),
     saveProject,
+    exportAs: () => exportDialog(),
     exportPNG: () => exportAs('image/png', 'png'),
     exportJPG: () => exportAs('image/jpeg', 'jpg'),
     exportWEBP: () => exportAs('image/webp', 'webp'),
@@ -3324,7 +3398,7 @@
       else if (k === 'y') cmd = 'redo';
       else if (k === 'o') cmd = 'open';
       else if (k === 's') cmd = 'saveProject';
-      else if (k === 'e') cmd = e.shiftKey ? 'exportPNG' : 'mergeDown';
+      else if (k === 'e') cmd = e.altKey ? 'exportAs' : e.shiftKey ? 'exportPNG' : 'mergeDown';
       else if (k === 'j') cmd = 'dupLayer';
       else if (k === '/') cmd = 'lockAll';
       else if (k === 'g') cmd = e.shiftKey ? 'ungroup' : e.altKey ? 'clipMask' : 'groupLayers';
