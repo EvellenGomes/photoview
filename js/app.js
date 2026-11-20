@@ -671,7 +671,7 @@
         octx.setLineDash([]);
       }
     }
-    if (cursor.in && (tool === 'brush' || tool === 'eraser' || tool === 'spot' || tool === 'quick' || isCloneTool()) && !panning && !xf) {
+    if (cursor.in && (tool === 'brush' || tool === 'eraser' || tool === 'spot' || tool === 'quick' || tool === 'blur' || tool === 'sharpen' || tool === 'smudge' || isCloneTool()) && !panning && !xf) {
       const r = Math.max(1, opts[tool].size / 2 * z);
       octx.beginPath(); octx.arc(sx(cursor.x), sy(cursor.y), r, 0, Math.PI * 2);
       octx.strokeStyle = 'rgba(0,0,0,.8)'; octx.lineWidth = 2; octx.stroke();
@@ -859,14 +859,17 @@
     marquee: { shape: 'rect', mode: 'new' },
     lasso: { type: 'free', mode: 'new' },
     quick: { size: 40, tolerance: 45, mode: 'add', allLayers: false },
+    blur: { size: 40, opacity: 60, hardness: 50, radius: 5 },
+    sharpen: { size: 40, opacity: 60, hardness: 50, amount: 120 },
+    smudge: { size: 40, opacity: 60, hardness: 60 },
     pen: { fillOn: true, strokeOn: false, strokeW: 6 },
     shape: { kind: 'rect', radius: 0, sides: 5, fillOn: true, strokeOn: false, strokeW: 6 },
     crop: { ratio: 'free' },
     wand: { tolerance: 32, contiguous: true, allLayers: false, mode: 'new' },
     text: { font: 'Arial', size: 48, bold: false },
   };
-  const TOOL_NAMES = { move: 'Mover', marquee: 'Letreiro', lasso: 'Laço', quick: 'Seleção rápida', wand: 'Varinha mágica', clone: 'Carimbo', heal: 'Pincel corretivo', spot: 'Corretivo para manchas', brush: 'Pincel', eraser: 'Borracha', bucket: 'Lata de tinta', gradient: 'Degradê', eyedropper: 'Conta-gotas', text: 'Texto', hand: 'Mão', zoom: 'Zoom', crop: 'Recortar', shape: 'Forma', pen: 'Caneta' };
-  const CURSORS = { move: 'move', marquee: 'crosshair', lasso: 'crosshair', quick: 'none', wand: 'crosshair', clone: 'none', heal: 'none', spot: 'none', brush: 'none', eraser: 'none', bucket: 'crosshair', gradient: 'crosshair', eyedropper: 'crosshair', text: 'text', hand: 'grab', zoom: 'zoom-in', crop: 'crosshair', shape: 'crosshair', pen: 'crosshair' };
+  const TOOL_NAMES = { move: 'Mover', marquee: 'Letreiro', lasso: 'Laço', quick: 'Seleção rápida', wand: 'Varinha mágica', clone: 'Carimbo', heal: 'Pincel corretivo', spot: 'Corretivo para manchas', brush: 'Pincel', eraser: 'Borracha', bucket: 'Lata de tinta', gradient: 'Degradê', eyedropper: 'Conta-gotas', text: 'Texto', hand: 'Mão', zoom: 'Zoom', crop: 'Recortar', shape: 'Forma', pen: 'Caneta', blur: 'Desfoque', sharpen: 'Nitidez', smudge: 'Borrar' };
+  const CURSORS = { move: 'move', marquee: 'crosshair', lasso: 'crosshair', quick: 'none', wand: 'crosshair', clone: 'none', heal: 'none', spot: 'none', brush: 'none', eraser: 'none', bucket: 'crosshair', gradient: 'crosshair', eyedropper: 'crosshair', text: 'text', hand: 'grab', zoom: 'zoom-in', crop: 'crosshair', shape: 'crosshair', pen: 'crosshair', blur: 'none', sharpen: 'none', smudge: 'none' };
   let tool = 'brush';
   let spaceDown = false, panning = null, drag = null, lastPoint = null;
 
@@ -926,6 +929,7 @@
     if (!layerEditable()) return false;
     if (isCloneTool() && !cloneState.src) { status('Alt+clique na imagem para escolher a origem do carimbo'); return false; }
     if (tool === 'eraser' && active().lockAlpha && !editingMask()) { status('A transparência está bloqueada: a borracha não pode apagar'); return false; }
+    if (tool === 'sharpen' && editingMask()) { status('A nitidez não funciona na máscara — use o desfoque'); return false; }
     if (tool === 'spot' && editingMask()) { status('O corretivo para manchas funciona no conteúdo da camada, não na máscara'); return false; }
     const erase = tool === 'eraser', o = opts[tool], onMask = editingMask();
     const s = strokeCv.getContext('2d');
@@ -947,7 +951,12 @@
         label: heal ? 'Pincel corretivo' : onMask ? 'Carimbo na máscara' : 'Carimbo' });
     }
     if (tool === 'spot') Object.assign(stroke, { spot: true, sampleAll: !!o.sampleAll, label: 'Corretivo para manchas' });
-    buildDab(o, onMask || isCloneTool() ? '#ffffff' : erase || tool === 'spot' ? '#000000' : fg());
+    if (tool === 'blur' || tool === 'sharpen') {
+      const base = onMask ? active().mask : active().canvas, fxc = tool === 'blur' ? blurredCopy(base, o.radius) : sharpenedCopy(base, o.amount);
+      const cp = clonePaint.getContext('2d'); cp.clearRect(0, 0, doc.w, doc.h); cp.drawImage(fxc, 0, 0);
+      Object.assign(stroke, { clone: true, gray: 1, label: tool === 'blur' ? 'Desfoque' : 'Nitidez' });
+    }
+    buildDab(o, onMask || isCloneTool() || tool === 'blur' || tool === 'sharpen' ? '#ffffff' : erase || tool === 'spot' ? '#000000' : fg());
     if (e.shiftKey && lastPoint) { stroke.lx = lastPoint.x; stroke.ly = lastPoint.y; dab(lastPoint.x, lastPoint.y, 1); strokeTo(p.x, p.y, 1); }
     else dab(p.x, p.y, pressureOf(e));
     requestRender();
@@ -1750,6 +1759,54 @@
     octx.restore();
   }
 
+  // ---------- desfoque, nitidez e borrar
+  function blurredCopy(base, radius) {
+    const c = newCanvas(doc.w, doc.h), x = c.getContext('2d');
+    x.filter = 'blur(' + Math.max(0.5, radius) + 'px)'; x.drawImage(base, 0, 0); x.filter = 'none';
+    return c;
+  }
+  function sharpenedCopy(base, amount) {
+    const c = newCanvas(doc.w, doc.h), x = ctxOf(c);
+    x.drawImage(base, 0, 0);
+    const img = x.getImageData(0, 0, doc.w, doc.h); Filters.sharpen(img, { amount, radius: 1.2 }); x.putImageData(img, 0, 0);
+    return c;
+  }
+  /* Borrar: o pincel carrega a cor que pegou e a arrasta; a força decide quanto da cor carregada é deixada em
+     cada ponto e quanto é recolhida do caminho. Altera a camada direto (o histórico registra no fim). */
+  let sm = null;
+  function smudgeDown(p) {
+    if (!layerEditable()) return false;
+    const L = active(), onMask = editingMask(), target = onMask ? L.mask : L.canvas, o = opts.smudge;
+    buildDab(o, '#ffffff');
+    const d = dabCv.width, buf = newCanvas(d, d);
+    buf.getContext('2d').drawImage(target, p.x - d / 2, p.y - d / 2, d, d, 0, 0, d, d); // cor sob o pincel no início
+    sm = { L, target, ctx: ctxOf(target), o, d, buf, tmp: newCanvas(d, d), last: p, orig: sel ? cloneCanvas(target) : null, moved: false };
+    return true;
+  }
+  function smudgeStep(q) {
+    const { ctx, o, d, buf, tmp, target } = sm, mix = o.opacity / 100, tc = tmp.getContext('2d');
+    tc.globalCompositeOperation = 'source-over'; tc.clearRect(0, 0, d, d); tc.drawImage(buf, 0, 0);
+    tc.globalCompositeOperation = 'destination-in'; tc.drawImage(dabCv, 0, 0, d, d); tc.globalCompositeOperation = 'source-over';
+    ctx.save(); ctx.globalAlpha = mix; ctx.drawImage(tmp, q.x - d / 2, q.y - d / 2); ctx.restore();
+    const bc = buf.getContext('2d'); bc.save(); bc.globalAlpha = 1 - mix; bc.drawImage(target, q.x - d / 2, q.y - d / 2, d, d, 0, 0, d, d); bc.restore(); // recolhe um pouco do novo lugar
+  }
+  function smudgeTo(p) {
+    if (!sm) return;
+    const dx = p.x - sm.last.x, dy = p.y - sm.last.y, dist = Math.hypot(dx, dy), step = Math.max(1, sm.d * 0.1);
+    for (let t = step; t <= dist; t += step) smudgeStep({ x: sm.last.x + dx * t / dist, y: sm.last.y + dy * t / dist });
+    if (dist >= step) { sm.last = p; sm.moved = true; touch(sm.L); requestRender(); }
+  }
+  function smudgeUp() {
+    if (!sm) return;
+    const m = sm; sm = null;
+    if (!m.moved) return;
+    if (m.orig) { // com seleção: só vale dentro dela
+      const now = cloneCanvas(m.target), c = m.ctx;
+      c.clearRect(0, 0, m.target.width, m.target.height); c.drawImage(m.orig, 0, 0); eraseSel(c); withSel(c, x => x.drawImage(now, 0, 0));
+    }
+    touch(m.L); pushHistory('Borrar'); render();
+  }
+
   // ---------- texto
   function startText(p) {
     const ta = document.createElement('textarea');
@@ -1810,7 +1867,7 @@
     const p = docPt(e);
     if (xf) { drag = { tool: 'xf', a: p, box0: { ...xf.box }, ...cropHit(p, xf.box) }; return; }
     switch (tool) {
-      case 'brush': case 'eraser': case 'spot':
+      case 'brush': case 'eraser': case 'spot': case 'blur': case 'sharpen':
         if (beginStroke(p, e)) drag = { tool: 'brush' }; // mesmo fluxo de traço para os três
         break;
       case 'clone': case 'heal':
@@ -1830,6 +1887,7 @@
       case 'marquee':
         drag = { tool, a: p, moved: false, mode: selModeFrom(e, opts.marquee.mode) };
         break;
+      case 'smudge': if (smudgeDown(p)) drag = { tool }; break;
       case 'pen': penDown(p, e); break;
       case 'shape': drag = { tool, a: p, moved: false }; break;
       case 'quick': {
@@ -1920,7 +1978,7 @@
     if (drag && drag.tool === 'crop') { cropDrag(p, e); drawOverlay(); return; }
     if (!drag && tool === 'lasso' && lasso && lasso.poly) { lasso.cur = p; drawOverlay(); return; }
     if (!drag && tool === 'pen' && pen) { pen.cur = p; drawOverlay(); return; }
-    if (!drag) { if (tool === 'brush' || tool === 'eraser' || tool === 'spot' || tool === 'quick' || isCloneTool()) drawOverlay(); return; }
+    if (!drag) { if (tool === 'brush' || tool === 'eraser' || tool === 'spot' || tool === 'quick' || tool === 'blur' || tool === 'sharpen' || tool === 'smudge' || isCloneTool()) drawOverlay(); return; }
     switch (drag.tool) {
       case 'brush': case 'eraser': {
         const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
@@ -1931,6 +1989,7 @@
       case 'gradient':
         gradLine.b = p; drawGradient(); requestRender();
         break;
+      case 'smudge': smudgeTo(p); break;
       case 'pen': penMove(p, e); break;
       case 'shape': {
         const o = opts.shape; let w = p.x - drag.a.x, h = p.y - drag.a.y;
@@ -2094,6 +2153,7 @@
         else stroke = null;
         gradLine = null; render();
         break;
+      case 'smudge': smudgeUp(); break;
       case 'lasso': finishLasso(); break;
       case 'pen':
         if (d.kind === 'anchor' || d.kind === 'handle') { if (d.moved && penEdit) penApplyEdit(true, d.kind === 'anchor' ? 'Mover ponto' : 'Ajustar curva'); }
@@ -3091,6 +3151,18 @@
         select('Modo', 'mode', SEL_MODES);
         hint('Shift+arrastar adiciona · Alt subtrai · Ctrl+D desmarca · Ctrl+J camada via cópia');
         break;
+      case 'blur':
+        range('Tamanho', 'size', 1, 300, 'px'); range('Força', 'opacity', 1, 100, '%'); range('Dureza', 'hardness', 0, 100, '%'); range('Raio', 'radius', 1, 30, 'px');
+        hint('Pinte para suavizar · quanto maior o raio, mais borrado · repita a pincelada para acumular · [ ] muda o tamanho');
+        break;
+      case 'sharpen':
+        range('Tamanho', 'size', 1, 300, 'px'); range('Força', 'opacity', 1, 100, '%'); range('Dureza', 'hardness', 0, 100, '%'); range('Quantidade', 'amount', 10, 400, '%');
+        hint('Pinte para realçar detalhes · exagerar cria halos e ruído · Shift+R seleciona esta ferramenta');
+        break;
+      case 'smudge':
+        range('Tamanho', 'size', 1, 300, 'px'); range('Força', 'opacity', 1, 100, '%'); range('Dureza', 'hardness', 0, 100, '%');
+        hint('Arraste para espalhar as cores como com o dedo · força alta arrasta mais longe');
+        break;
       case 'pen':
         check('Preencher (cor principal)', 'fillOn'); check('Contorno (cor secundária)', 'strokeOn'); range('Espessura', 'strokeW', 1, 60, 'px');
         button('Fazer seleção (Ctrl+Enter)', () => penToSelection());
@@ -3172,7 +3244,7 @@
   document.querySelectorAll('#toolbar [data-tool]').forEach(b => b.addEventListener('click', () => setTool(b.dataset.tool)));
 
   // ---------- teclado
-  const TOOL_KEYS = { v: 'move', m: 'marquee', w: 'wand', l: 'lasso', s: 'clone', j: 'spot', b: 'brush', e: 'eraser', g: 'bucket', i: 'eyedropper', t: 'text', h: 'hand', z: 'zoom', c: 'crop', u: 'shape', p: 'pen' };
+  const TOOL_KEYS = { v: 'move', m: 'marquee', w: 'wand', l: 'lasso', s: 'clone', j: 'spot', b: 'brush', e: 'eraser', g: 'bucket', i: 'eyedropper', t: 'text', h: 'hand', z: 'zoom', c: 'crop', u: 'shape', p: 'pen', r: 'blur', f: 'smudge' };
   window.addEventListener('keydown', e => {
     if (!modal.hidden) { if (e.key === 'Escape') { e.preventDefault(); dlg && dlg.cancel(); } return; }
     if (e.target.matches && e.target.matches('input, textarea, select, [contenteditable="true"]')) return;
@@ -3236,6 +3308,7 @@
     } else if (k === 'g' && e.shiftKey) { setTool('gradient'); return; }
     else if (k === 'j' && e.shiftKey) { setTool('heal'); return; }
     else if (k === 'w' && e.shiftKey) { setTool('quick'); return; }
+    else if (k === 'r' && e.shiftKey) { setTool('sharpen'); return; }
     else if (TOOL_KEYS[k] && !e.altKey) { setTool(TOOL_KEYS[k]); return; }
     else if (k === '[' || k === ']') {
       const o = opts[tool]; if (!o || o.size === undefined) return;
