@@ -671,7 +671,7 @@
         octx.setLineDash([]);
       }
     }
-    if (cursor.in && (tool === 'brush' || tool === 'eraser' || tool === 'spot' || tool === 'quick' || tool === 'blur' || tool === 'sharpen' || tool === 'smudge' || isCloneTool()) && !panning && !xf) {
+    if (cursor.in && (tool === 'brush' || tool === 'eraser' || tool === 'spot' || tool === 'quick' || tool === 'blur' || tool === 'sharpen' || tool === 'smudge' || tool === 'dodge' || tool === 'burn' || tool === 'sponge' || isCloneTool()) && !panning && !xf) {
       const r = Math.max(1, opts[tool].size / 2 * z);
       octx.beginPath(); octx.arc(sx(cursor.x), sy(cursor.y), r, 0, Math.PI * 2);
       octx.strokeStyle = 'rgba(0,0,0,.8)'; octx.lineWidth = 2; octx.stroke();
@@ -859,6 +859,9 @@
     marquee: { shape: 'rect', mode: 'new' },
     lasso: { type: 'free', mode: 'new' },
     quick: { size: 40, tolerance: 45, mode: 'add', allLayers: false },
+    dodge: { size: 60, opacity: 30, hardness: 60, range: 'mid' },
+    burn: { size: 60, opacity: 30, hardness: 60, range: 'mid' },
+    sponge: { size: 60, opacity: 40, hardness: 60, mode: 'desat' },
     blur: { size: 40, opacity: 60, hardness: 50, radius: 5 },
     sharpen: { size: 40, opacity: 60, hardness: 50, amount: 120 },
     smudge: { size: 40, opacity: 60, hardness: 60 },
@@ -868,8 +871,8 @@
     wand: { tolerance: 32, contiguous: true, allLayers: false, mode: 'new' },
     text: { font: 'Arial', size: 48, bold: false },
   };
-  const TOOL_NAMES = { move: 'Mover', marquee: 'Letreiro', lasso: 'Laço', quick: 'Seleção rápida', wand: 'Varinha mágica', clone: 'Carimbo', heal: 'Pincel corretivo', spot: 'Corretivo para manchas', brush: 'Pincel', eraser: 'Borracha', bucket: 'Lata de tinta', gradient: 'Degradê', eyedropper: 'Conta-gotas', text: 'Texto', hand: 'Mão', zoom: 'Zoom', crop: 'Recortar', shape: 'Forma', pen: 'Caneta', blur: 'Desfoque', sharpen: 'Nitidez', smudge: 'Borrar' };
-  const CURSORS = { move: 'move', marquee: 'crosshair', lasso: 'crosshair', quick: 'none', wand: 'crosshair', clone: 'none', heal: 'none', spot: 'none', brush: 'none', eraser: 'none', bucket: 'crosshair', gradient: 'crosshair', eyedropper: 'crosshair', text: 'text', hand: 'grab', zoom: 'zoom-in', crop: 'crosshair', shape: 'crosshair', pen: 'crosshair', blur: 'none', sharpen: 'none', smudge: 'none' };
+  const TOOL_NAMES = { move: 'Mover', marquee: 'Letreiro', lasso: 'Laço', quick: 'Seleção rápida', wand: 'Varinha mágica', clone: 'Carimbo', heal: 'Pincel corretivo', spot: 'Corretivo para manchas', brush: 'Pincel', eraser: 'Borracha', bucket: 'Lata de tinta', gradient: 'Degradê', eyedropper: 'Conta-gotas', text: 'Texto', hand: 'Mão', zoom: 'Zoom', crop: 'Recortar', shape: 'Forma', pen: 'Caneta', blur: 'Desfoque', sharpen: 'Nitidez', smudge: 'Borrar', dodge: 'Subexposição (clarear)', burn: 'Superexposição (escurecer)', sponge: 'Esponja' };
+  const CURSORS = { move: 'move', marquee: 'crosshair', lasso: 'crosshair', quick: 'none', wand: 'crosshair', clone: 'none', heal: 'none', spot: 'none', brush: 'none', eraser: 'none', bucket: 'crosshair', gradient: 'crosshair', eyedropper: 'crosshair', text: 'text', hand: 'grab', zoom: 'zoom-in', crop: 'crosshair', shape: 'crosshair', pen: 'crosshair', blur: 'none', sharpen: 'none', smudge: 'none', dodge: 'none', burn: 'none', sponge: 'none' };
   let tool = 'brush';
   let spaceDown = false, panning = null, drag = null, lastPoint = null;
 
@@ -929,6 +932,7 @@
     if (!layerEditable()) return false;
     if (isCloneTool() && !cloneState.src) { status('Alt+clique na imagem para escolher a origem do carimbo'); return false; }
     if (tool === 'eraser' && active().lockAlpha && !editingMask()) { status('A transparência está bloqueada: a borracha não pode apagar'); return false; }
+    if ((tool === 'dodge' || tool === 'burn' || tool === 'sponge') && editingMask()) { status('Esta ferramenta age nas cores da camada, não na máscara'); return false; }
     if (tool === 'sharpen' && editingMask()) { status('A nitidez não funciona na máscara — use o desfoque'); return false; }
     if (tool === 'spot' && editingMask()) { status('O corretivo para manchas funciona no conteúdo da camada, não na máscara'); return false; }
     const erase = tool === 'eraser', o = opts[tool], onMask = editingMask();
@@ -956,7 +960,14 @@
       const cp = clonePaint.getContext('2d'); cp.clearRect(0, 0, doc.w, doc.h); cp.drawImage(fxc, 0, 0);
       Object.assign(stroke, { clone: true, gray: 1, label: tool === 'blur' ? 'Desfoque' : 'Nitidez' });
     }
-    buildDab(o, onMask || isCloneTool() || tool === 'blur' || tool === 'sharpen' ? '#ffffff' : erase || tool === 'spot' ? '#000000' : fg());
+    if (tool === 'dodge' || tool === 'burn' || tool === 'sponge') {
+      // Alt inverte entre subexposição e superexposição; a cópia processada é aplicada com a exposição como opacidade
+      const burn = tool === 'burn' ? !e.altKey : tool === 'dodge' ? !!e.altKey : false;
+      const fxc = tool === 'sponge' ? spongeCopy(active().canvas, o.mode) : dodgeBurnCopy(active().canvas, burn, o.range);
+      const cp = clonePaint.getContext('2d'); cp.clearRect(0, 0, doc.w, doc.h); cp.drawImage(fxc, 0, 0);
+      Object.assign(stroke, { clone: true, gray: 1, label: tool === 'sponge' ? 'Esponja' : burn ? 'Superexposição' : 'Subexposição' });
+    }
+    buildDab(o, onMask || isCloneTool() || fxBrush() ? '#ffffff' : erase || tool === 'spot' ? '#000000' : fg());
     if (e.shiftKey && lastPoint) { stroke.lx = lastPoint.x; stroke.ly = lastPoint.y; dab(lastPoint.x, lastPoint.y, 1); strokeTo(p.x, p.y, 1); }
     else dab(p.x, p.y, pressureOf(e));
     requestRender();
@@ -1759,6 +1770,28 @@
     octx.restore();
   }
 
+  // ---------- subexposição, superexposição e esponja
+  const fxBrush = () => ['blur', 'sharpen', 'dodge', 'burn', 'sponge'].includes(tool);
+  // clareia ou escurece conforme o intervalo tonal (sombras, meios-tons ou realces); preto e branco puros resistem no intervalo errado
+  function dodgeBurnCopy(base, burn, range) {
+    const c = newCanvas(doc.w, doc.h), x = ctxOf(c); x.drawImage(base, 0, 0);
+    const img = x.getImageData(0, 0, doc.w, doc.h), d = img.data;
+    for (let i = 0; i < d.length; i += 4) {
+      if (!d[i + 3]) continue;
+      const l = (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]) / 255;
+      const w = range === 'shadows' ? (1 - l) * (1 - l) : range === 'highlights' ? l * l : 1 - (2 * l - 1) * (2 * l - 1);
+      const k = w * 0.6;
+      for (let q = 0; q < 3; q++) d[i + q] = burn ? d[i + q] * (1 - k) : d[i + q] + (255 - d[i + q]) * k;
+    }
+    x.putImageData(img, 0, 0);
+    return c;
+  }
+  function spongeCopy(base, mode) {
+    const c = newCanvas(doc.w, doc.h), x = ctxOf(c); x.drawImage(base, 0, 0);
+    const img = x.getImageData(0, 0, doc.w, doc.h); Filters.hsl(img, { hue: 0, saturation: mode === 'sat' ? 100 : -100, lightness: 0 }); x.putImageData(img, 0, 0);
+    return c;
+  }
+
   // ---------- desfoque, nitidez e borrar
   function blurredCopy(base, radius) {
     const c = newCanvas(doc.w, doc.h), x = c.getContext('2d');
@@ -1867,7 +1900,7 @@
     const p = docPt(e);
     if (xf) { drag = { tool: 'xf', a: p, box0: { ...xf.box }, ...cropHit(p, xf.box) }; return; }
     switch (tool) {
-      case 'brush': case 'eraser': case 'spot': case 'blur': case 'sharpen':
+      case 'brush': case 'eraser': case 'spot': case 'blur': case 'sharpen': case 'dodge': case 'burn': case 'sponge':
         if (beginStroke(p, e)) drag = { tool: 'brush' }; // mesmo fluxo de traço para os três
         break;
       case 'clone': case 'heal':
@@ -1978,7 +2011,7 @@
     if (drag && drag.tool === 'crop') { cropDrag(p, e); drawOverlay(); return; }
     if (!drag && tool === 'lasso' && lasso && lasso.poly) { lasso.cur = p; drawOverlay(); return; }
     if (!drag && tool === 'pen' && pen) { pen.cur = p; drawOverlay(); return; }
-    if (!drag) { if (tool === 'brush' || tool === 'eraser' || tool === 'spot' || tool === 'quick' || tool === 'blur' || tool === 'sharpen' || tool === 'smudge' || isCloneTool()) drawOverlay(); return; }
+    if (!drag) { if (tool === 'brush' || tool === 'eraser' || tool === 'spot' || tool === 'quick' || tool === 'blur' || tool === 'sharpen' || tool === 'smudge' || tool === 'dodge' || tool === 'burn' || tool === 'sponge' || isCloneTool()) drawOverlay(); return; }
     switch (drag.tool) {
       case 'brush': case 'eraser': {
         const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
@@ -3151,6 +3184,16 @@
         select('Modo', 'mode', SEL_MODES);
         hint('Shift+arrastar adiciona · Alt subtrai · Ctrl+D desmarca · Ctrl+J camada via cópia');
         break;
+      case 'dodge': case 'burn':
+        range('Tamanho', 'size', 1, 500, 'px'); range('Exposição', 'opacity', 1, 100, '%'); range('Dureza', 'hardness', 0, 100, '%');
+        select('Intervalo', 'range', [['mid', 'Meios-tons'], ['shadows', 'Sombras'], ['highlights', 'Realces']]);
+        hint((tool === 'dodge' ? 'Pinte para clarear' : 'Pinte para escurecer') + ' · Alt inverte (' + (tool === 'dodge' ? 'escurece' : 'clareia') + ') · intervalo escolhe quais tons mudam · repita para acumular');
+        break;
+      case 'sponge':
+        range('Tamanho', 'size', 1, 500, 'px'); range('Fluxo', 'opacity', 1, 100, '%'); range('Dureza', 'hardness', 0, 100, '%');
+        select('Modo', 'mode', [['desat', 'Dessaturar'], ['sat', 'Saturar']]);
+        hint('Pinte para tirar ou dar cor · repita para acumular');
+        break;
       case 'blur':
         range('Tamanho', 'size', 1, 300, 'px'); range('Força', 'opacity', 1, 100, '%'); range('Dureza', 'hardness', 0, 100, '%'); range('Raio', 'radius', 1, 30, 'px');
         hint('Pinte para suavizar · quanto maior o raio, mais borrado · repita a pincelada para acumular · [ ] muda o tamanho');
@@ -3244,7 +3287,7 @@
   document.querySelectorAll('#toolbar [data-tool]').forEach(b => b.addEventListener('click', () => setTool(b.dataset.tool)));
 
   // ---------- teclado
-  const TOOL_KEYS = { v: 'move', m: 'marquee', w: 'wand', l: 'lasso', s: 'clone', j: 'spot', b: 'brush', e: 'eraser', g: 'bucket', i: 'eyedropper', t: 'text', h: 'hand', z: 'zoom', c: 'crop', u: 'shape', p: 'pen', r: 'blur', f: 'smudge' };
+  const TOOL_KEYS = { v: 'move', m: 'marquee', w: 'wand', l: 'lasso', s: 'clone', j: 'spot', b: 'brush', e: 'eraser', g: 'bucket', i: 'eyedropper', t: 'text', h: 'hand', z: 'zoom', c: 'crop', u: 'shape', p: 'pen', r: 'blur', f: 'smudge', o: 'dodge', n: 'sponge' };
   window.addEventListener('keydown', e => {
     if (!modal.hidden) { if (e.key === 'Escape') { e.preventDefault(); dlg && dlg.cancel(); } return; }
     if (e.target.matches && e.target.matches('input, textarea, select, [contenteditable="true"]')) return;
@@ -3309,6 +3352,7 @@
     else if (k === 'j' && e.shiftKey) { setTool('heal'); return; }
     else if (k === 'w' && e.shiftKey) { setTool('quick'); return; }
     else if (k === 'r' && e.shiftKey) { setTool('sharpen'); return; }
+    else if (k === 'o' && e.shiftKey) { setTool('burn'); return; }
     else if (TOOL_KEYS[k] && !e.altKey) { setTool(TOOL_KEYS[k]); return; }
     else if (k === '[' || k === ']') {
       const o = opts[tool]; if (!o || o.size === undefined) return;
