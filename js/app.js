@@ -292,7 +292,7 @@
           s.clearRect(0, 0, doc.w, doc.h);
           s.drawImage(L.canvas, 0, 0);
           s.globalAlpha = stroke.spot ? 0.45 : stroke.alpha; // manchas: prévia translúcida
-          s.globalCompositeOperation = stroke.erase ? 'destination-out' : 'source-over';
+          s.globalCompositeOperation = stroke.erase ? 'destination-out' : (L.lockAlpha ? 'source-atop' : 'source-over');
           s.drawImage(strokeContent(), 0, 0);
           s.globalAlpha = 1; s.globalCompositeOperation = 'source-over';
           src = scratch;
@@ -608,11 +608,37 @@
         const same = p && p.rev === L.rev;
         const canvas = same ? p.canvas : cloneCanvas(L.canvas);
         const mask = same ? p.mask : (L.mask ? cloneCanvas(L.mask) : null);
-        return { id: L.id, name: L.name, visible: L.visible, opacity: L.opacity, blend: L.blend, fx: L.fx || null, adj: L.adj || null, text: L.text || null, shape: L.shape || null, group: !!L.group, pid: L.pid || 0, collapsed: !!L.collapsed, clip: !!L.clip, maskOn: L.maskOn, maskEdit: L.maskEdit, rev: L.rev, canvas, mask };
+        return { id: L.id, name: L.name, visible: L.visible, opacity: L.opacity, blend: L.blend, fx: L.fx || null, adj: L.adj || null, text: L.text || null, shape: L.shape || null, group: !!L.group, pid: L.pid || 0, collapsed: !!L.collapsed, clip: !!L.clip, lockAlpha: !!L.lockAlpha, lockPixels: !!L.lockPixels, lockPos: !!L.lockPos, maskOn: L.maskOn, maskEdit: L.maskEdit, rev: L.rev, canvas, mask };
       }),
     };
   }
+  /* Bloqueios de camada. As ferramentas já recusam editar camadas travadas (layerEditable); esta rede de segurança
+     cobre o resto: ao registrar um passo, pixels bloqueados voltam ao que eram e, com a transparência bloqueada,
+     o canal alfa volta ao anterior. Mover e transformar são permitidos (lockBypass). */
+  let lockBypass = false;
+  function enforceLocks() {
+    const prev = history.states[history.index];
+    if (!prev || lockBypass) return;
+    const pm = new Map(prev.snap.layers.map(l => [l.id, l]));
+    for (const L of doc.layers) {
+      if (L.group || !(L.lockPixels || L.lockAlpha)) continue;
+      const p = pm.get(L.id);
+      if (!p || p.rev === L.rev || p.canvas.width !== L.canvas.width || p.canvas.height !== L.canvas.height) continue;
+      const w = L.canvas.width, h = L.canvas.height, c = ctxOf(L.canvas);
+      const cur = c.getImageData(0, 0, w, h), old = ctxOf(p.canvas).getImageData(0, 0, w, h);
+      if (L.lockPixels) {
+        let diff = false;
+        for (let i = 0; i < cur.data.length; i += 4) if (cur.data[i + 3] !== old.data[i + 3] || cur.data[i] !== old.data[i] || cur.data[i + 1] !== old.data[i + 1] || cur.data[i + 2] !== old.data[i + 2]) { diff = true; break; }
+        if (diff) { c.putImageData(old, 0, 0); touch(L); status('Pixels bloqueados: a alteração em “' + L.name + '” foi desfeita'); }
+        continue;
+      }
+      let changed = false;
+      for (let i = 3; i < cur.data.length; i += 4) if (cur.data[i] !== old.data[i]) { cur.data[i] = old.data[i]; changed = true; }
+      if (changed) { c.putImageData(cur, 0, 0); touch(L); }
+    }
+  }
   function pushHistory(label) {
+    enforceLocks();
     const snap = snapshot();
     history.states.splice(history.index + 1);
     history.states.push({ label, snap });
@@ -691,7 +717,7 @@
   function saveProject() {
     const data = {
       app: 'photoview', version: 1, w: doc.w, h: doc.h, active: doc.active,
-      layers: doc.layers.map(L => ({ name: L.name, visible: L.visible, opacity: L.opacity, blend: L.blend, fx: L.fx || null, adj: L.adj || null, text: L.text || null, shape: L.shape || null, id: L.id, group: !!L.group, pid: L.pid || 0, collapsed: !!L.collapsed, clip: !!L.clip, maskOn: L.maskOn, mask: L.mask ? L.mask.toDataURL('image/png') : null, data: L.canvas.toDataURL('image/png') })),
+      layers: doc.layers.map(L => ({ name: L.name, visible: L.visible, opacity: L.opacity, blend: L.blend, fx: L.fx || null, adj: L.adj || null, text: L.text || null, shape: L.shape || null, id: L.id, group: !!L.group, pid: L.pid || 0, collapsed: !!L.collapsed, clip: !!L.clip, lockAlpha: !!L.lockAlpha, lockPixels: !!L.lockPixels, lockPos: !!L.lockPos, maskOn: L.maskOn, mask: L.mask ? L.mask.toDataURL('image/png') : null, data: L.canvas.toDataURL('image/png') })),
     };
     download(new Blob([JSON.stringify(data)], { type: 'application/json' }), `${doc.name}.pview`);
     status('Projeto salvo');
@@ -708,7 +734,7 @@
       doc.name = baseName(file); sel = null;
       doc.layers = data.layers.map((l, i) => {
         const L = makeLayer(l.name);
-        Object.assign(L, { visible: l.visible, opacity: l.opacity, blend: l.blend, fx: l.fx || null, adj: l.adj || null, text: l.text || null, shape: l.shape || null, maskEdit: !!l.adj, group: !!l.group, collapsed: !!l.collapsed, clip: !!l.clip, _oid: l.id, _opid: l.pid || 0 });
+        Object.assign(L, { visible: l.visible, opacity: l.opacity, blend: l.blend, fx: l.fx || null, adj: l.adj || null, text: l.text || null, shape: l.shape || null, maskEdit: !!l.adj, group: !!l.group, collapsed: !!l.collapsed, clip: !!l.clip, lockAlpha: !!l.lockAlpha, lockPixels: !!l.lockPixels, lockPos: !!l.lockPos, _oid: l.id, _opid: l.pid || 0 });
         if (l.group) L.canvas = newCanvas(1, 1);
         ctxOf(L.canvas).drawImage(imgs[i], 0, 0);
         if (masks[i]) { L.mask = newMask(false); ctxOf(L.mask).drawImage(masks[i], 0, 0); L.maskOn = l.maskOn !== false; }
@@ -799,10 +825,11 @@
     s.lx = x; s.ly = y;
   }
   const pressureOf = e => e.pointerType === 'pen' ? Math.max(0.05, e.pressure || 0.5) : 1;
-  function layerEditable() {
+  function layerEditable(forMove) { // forMove: mover/transformar só dependem do bloqueio de posição
     const L = active();
     if (L.group) { status('Selecione uma camada dentro do grupo'); return false; }
     if (!effVisible(L)) { status('A camada ativa está oculta'); return false; }
+    if (!forMove && !editingMask() && L.lockPixels) { status('Os pixels desta camada estão bloqueados (cadeado no painel de camadas)'); return false; }
     return true;
   }
   const cloneState = { src: null, offset: null }; // origem compartilhada por carimbo e pincel corretivo
@@ -810,6 +837,7 @@
   function beginStroke(p, e) {
     if (!layerEditable()) return false;
     if (isCloneTool() && !cloneState.src) { status('Alt+clique na imagem para escolher a origem do carimbo'); return false; }
+    if (tool === 'eraser' && active().lockAlpha && !editingMask()) { status('A transparência está bloqueada: a borracha não pode apagar'); return false; }
     if (tool === 'spot' && editingMask()) { status('O corretivo para manchas funciona no conteúdo da camada, não na máscara'); return false; }
     const erase = tool === 'eraser', o = opts[tool], onMask = editingMask();
     const s = strokeCv.getContext('2d');
@@ -849,7 +877,7 @@
       const c = ctxOf(L.canvas);
       c.save();
       c.globalAlpha = stroke.alpha;
-      c.globalCompositeOperation = stroke.erase ? 'destination-out' : 'source-over';
+      c.globalCompositeOperation = stroke.erase ? 'destination-out' : (L.lockAlpha ? 'source-atop' : 'source-over');
       c.drawImage(strokeContent(), 0, 0);
       c.restore();
     }
@@ -1146,7 +1174,8 @@
     commitText();
     if (tool === 'crop') setTool('move');
     const L = active();
-    if (!layerEditable()) return;
+    if (!layerEditable(true)) return;
+    if (L.lockPos && !editingMask()) return status('A posição desta camada está bloqueada');
     const onMask = editingMask(), target = targetCanvas();
     const r = sel ? selBounds() : contentBounds(target);
     if (!r) return status(sel ? 'A seleção está fora da imagem' : 'A camada está vazia: nada para transformar');
@@ -1190,7 +1219,7 @@
     xf = null;
     if (asText) renderTextLayer(xL, { ...xT, m: matMul(M, xT.m || IDENT) });
     if (asShape) renderShapeLayer(xL, { ...xS, m: matMul(M2, xS.m || IDENT) }); // a forma é redesenhada nítida na nova escala/ângulo
-    if (changed) pushHistory('Transformação livre');
+    if (changed) { lockBypass = true; pushHistory('Transformação livre'); lockBypass = false; }
     buildOptions(); render();
   }
   function cancelTransform() {
@@ -1318,6 +1347,7 @@
   const TEXT_FONTS = ['Arial', 'Helvetica', 'Georgia', 'Times New Roman', 'Verdana', 'Trebuchet MS', 'Courier New', 'Impact', 'Comic Sans MS', 'system-ui'];
   function editTextLayer(L) {
     if (!L || !L.text) return status('A camada ativa não é de texto');
+    if (L.lockPixels) return status('Os pixels desta camada estão bloqueados');
     if (!textValid(L)) { L.text = null; refreshPanels(); return status('Este texto foi rasterizado por outra edição e não pode mais ser editado'); }
     commitText();
     const before = L.text, autoName = L.name === (before.content.trim().split('\n')[0].slice(0, 24) || 'Texto');
@@ -1424,6 +1454,7 @@
   }
   function editShapeLayer(L) {
     if (!L || !L.shape) return status('A camada ativa não é uma forma');
+    if (L.lockPixels) return status('Os pixels desta camada estão bloqueados');
     if (!shapeValid(L)) { L.shape = null; refreshPanels(); return status('Esta forma foi rasterizada por outra edição e não pode mais ser editada'); }
     commitText();
     const before = L.shape, k = before.kind, fields = [];
@@ -1559,12 +1590,14 @@
         if (active().group) { // grupo: move todas as camadas de dentro juntas
           const G = active();
           if (!effVisible(G)) { status('O grupo está oculto'); break; }
-          const items = descendantsOf(G).filter(l => !l.group).map(l => ({ L: l, base: cloneCanvas(l.canvas), mask: l.mask ? cloneCanvas(l.mask) : null }));
+          if (G.lockPos) { status('A posição deste grupo está bloqueada'); break; }
+          const items = descendantsOf(G).filter(l => !l.group && !l.lockPos).map(l => ({ L: l, base: cloneCanvas(l.canvas), mask: l.mask ? cloneCanvas(l.mask) : null }));
           if (!items.length) { status('O grupo está vazio'); break; }
           drag = { tool, a: p, group: true, items, moved: false };
           break;
         }
-        if (!layerEditable()) break;
+        if (!layerEditable(true)) break;
+        if (active().lockPos && !editingMask()) { status('A posição desta camada está bloqueada'); break; }
         const tc = targetCanvas(), src = cloneCanvas(tc);
         let float = src, hole = null;
         if (sel) {
@@ -1805,12 +1838,12 @@
         if (d.moved && d.group) {
           for (const it of d.items) { touch(it.L); if (it.L.text) it.L.text = { ...it.L.text, m: matMul([1, 0, 0, 1, d.dx || 0, d.dy || 0], it.L.text.m || IDENT) };
             if (it.L.shape) it.L.shape = { ...it.L.shape, m: matMul([1, 0, 0, 1, d.dx || 0, d.dy || 0], it.L.shape.m || IDENT) }; }
-          pushHistory('Mover grupo');
+          lockBypass = true; pushHistory('Mover grupo'); lockBypass = false;
         } else if (d.moved) {
           const L = active(); touch(L);
           if (L.text && d.tc === L.canvas && !d.sel0) L.text = { ...L.text, m: matMul([1, 0, 0, 1, d.dx || 0, d.dy || 0], L.text.m || IDENT) };
           if (L.shape && d.tc === L.canvas && !d.sel0) L.shape = { ...L.shape, m: matMul([1, 0, 0, 1, d.dx || 0, d.dy || 0], L.shape.m || IDENT) };
-          pushHistory('Mover');
+          lockBypass = true; pushHistory('Mover'); lockBypass = false;
         }
         break;
       case 'crop':
@@ -2304,7 +2337,7 @@
         const block = blockOf(L), map = new Map();
         const copies = block.map(o => {
           const N = makeLayer(o === L ? o.name + ' cópia' : o.name, o.group ? newCanvas(1, 1) : cloneCanvas(o.canvas));
-          Object.assign(N, { opacity: o.opacity, blend: o.blend, visible: o.visible, fx: o.fx || null, adj: o.adj || null, text: o.text || null, shape: o.shape || null, mask: o.mask ? cloneCanvas(o.mask) : null, maskOn: o.maskOn, maskEdit: false, group: !!o.group, collapsed: !!o.collapsed, clip: !!o.clip });
+          Object.assign(N, { opacity: o.opacity, blend: o.blend, visible: o.visible, fx: o.fx || null, adj: o.adj || null, text: o.text || null, shape: o.shape || null, mask: o.mask ? cloneCanvas(o.mask) : null, maskOn: o.maskOn, maskEdit: false, group: !!o.group, collapsed: !!o.collapsed, clip: !!o.clip, lockAlpha: !!o.lockAlpha, lockPixels: !!o.lockPixels, lockPos: !!o.lockPos });
           map.set(o.id, N); return N;
         });
         copies.forEach((N, k) => { const o = block[k]; N.pid = o === L ? pidOf(L) : map.get(o.pid).id; });
@@ -2316,7 +2349,7 @@
       const N = makeLayer(r ? `${L.name} (cópia da seleção)` : `${L.name} cópia`);
       const c = ctxOf(N.canvas);
       withSel(c, x => x.drawImage(L.canvas, 0, 0));
-      if (!r) Object.assign(N, { opacity: L.opacity, blend: L.blend, visible: L.visible, fx: L.fx || null, adj: L.adj || null, text: L.text || null, shape: L.shape || null, clip: !!L.clip, mask: L.mask ? cloneCanvas(L.mask) : null, maskOn: L.maskOn, maskEdit: L.maskEdit });
+      if (!r) Object.assign(N, { opacity: L.opacity, blend: L.blend, visible: L.visible, fx: L.fx || null, adj: L.adj || null, text: L.text || null, shape: L.shape || null, clip: !!L.clip, lockAlpha: !!L.lockAlpha, lockPixels: !!L.lockPixels, lockPos: !!L.lockPos, mask: L.mask ? cloneCanvas(L.mask) : null, maskOn: L.maskOn, maskEdit: L.maskEdit });
       insertLayer(N); pushHistory(r ? 'Camada via cópia' : 'Duplicar camada'); render();
     },
     delLayer: () => {
@@ -2339,6 +2372,7 @@
       if (doc.active === 0) return status('Não há camada abaixo');
       const L = active(), B = doc.layers[doc.active - 1];
       if (B.group || pidOf(B) !== pidOf(L)) return status('Não dá para mesclar entre grupos diferentes');
+      if (B.lockPixels) return status('A camada de baixo está com os pixels bloqueados');
       if (B.adj) return status('Não dá para mesclar numa camada de ajuste');
       // a camada de baixo vira pixels finais (máscara e estilo aplicados) antes de receber a de cima
       if (B.mask || hasFx(B)) { const baked = B.visible ? cloneCanvas(layerRender(B)) : newCanvas(doc.w, doc.h); Object.assign(B, { canvas: baked, mask: null, maskEdit: false, fx: null, visible: true }); }
@@ -2442,6 +2476,7 @@
     editContent: () => { if (active().adj) return status('Camada de ajuste: só a máscara é editável'); active().maskEdit = false; refreshPanels(); },
     cropTool: () => setTool('crop'),
     editText: () => editTextLayer(active()),
+    lockAll: () => toggleLock('all'),
     editShape: () => editShapeLayer(active()),
     freeTransform: () => startTransform(),
     newAdjPick: () => openDialog({
@@ -2589,7 +2624,7 @@
         name.onblur = () => done(true);
       };
       const meta = document.createElement('span'); meta.className = 'meta';
-      meta.textContent = (hasFx(L) ? 'fx ' : '') + (L.opacity < 1 ? Math.round(L.opacity * 100) + '%' : '');
+      meta.textContent = (L.lockAlpha && L.lockPixels && L.lockPos ? '🔒 ' : L.lockAlpha || L.lockPixels || L.lockPos ? '◪ ' : '') + (hasFx(L) ? 'fx ' : '') + (L.opacity < 1 ? Math.round(L.opacity * 100) + '%' : '');
       meta.title = hasFx(L) ? 'Clique duas vezes na miniatura para editar o estilo' : '';
       th.title = L.group ? 'Grupo · duplo clique: recolher/expandir' : 'Conteúdo da camada · duplo clique: estilos de camada';
       th.ondblclick = e => { e.stopPropagation(); if (L.group) { L.collapsed = !L.collapsed; renderLayers(); } else L.adj ? editAdj(L, false) : L.text ? editTextLayer(L) : L.shape ? editShapeLayer(L) : run('layerStyle'); };
@@ -2658,7 +2693,20 @@
     blendSel.value = A.blend;
     opSlider.value = Math.round(A.opacity * 100);
     $('#layerOpacityVal').textContent = opSlider.value + '%';
+    document.querySelectorAll('#layerLocks [data-lock]').forEach(b => {
+      const k = b.dataset.lock;
+      b.classList.toggle('on', k === 'all' ? !!(A.lockAlpha && A.lockPixels && A.lockPos) : !!A['lock' + k[0].toUpperCase() + k.slice(1)]);
+    });
   }
+  // liga/desliga um bloqueio nas camadas selecionadas
+  function toggleLock(kind) {
+    const ls = selectedLayers(), flags = kind === 'all' ? ['lockAlpha', 'lockPixels', 'lockPos'] : ['lock' + kind[0].toUpperCase() + kind.slice(1)];
+    const on = !ls.every(l => flags.every(f => l[f]));
+    for (const l of ls) for (const f of flags) l[f] = on;
+    pushHistory(on ? 'Bloquear camada' : 'Desbloquear camada'); render();
+    status(on ? 'Camada bloqueada' : 'Camada desbloqueada');
+  }
+  document.querySelectorAll('#layerLocks [data-lock]').forEach(b => b.addEventListener('click', () => toggleLock(b.dataset.lock)));
   function renderHistory() {
     const list = $('#historyList'); list.innerHTML = '';
     history.states.forEach((s, i) => {
@@ -2848,6 +2896,7 @@
       else if (k === 's') cmd = 'saveProject';
       else if (k === 'e') cmd = e.shiftKey ? 'exportPNG' : 'mergeDown';
       else if (k === 'j') cmd = 'dupLayer';
+      else if (k === '/') cmd = 'lockAll';
       else if (k === 'g') cmd = e.shiftKey ? 'ungroup' : e.altKey ? 'clipMask' : 'groupLayers';
       else if (k === 'n' && e.shiftKey) cmd = 'newLayer';
       else if (k === 'a') cmd = 'selectAll';

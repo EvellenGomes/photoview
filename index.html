@@ -103,6 +103,7 @@
         <button data-cmd="clearStyle">Limpar estilo</button>
         <hr>
         <button data-cmd="clipMask">Criar / soltar máscara de recorte <kbd>Ctrl+Alt+G</kbd></button>
+        <button data-cmd="lockAll">Bloquear / desbloquear tudo <kbd>Ctrl+/</kbd></button>
         <button data-cmd="groupLayers">Agrupar camadas <kbd>Ctrl+G</kbd></button>
         <button data-cmd="ungroup">Desagrupar <kbd>Ctrl+Shift+G</kbd></button>
         <button data-cmd="mergeGroup">Mesclar grupo</button>
@@ -175,6 +176,13 @@
       <div class="layer-props">
         <select id="blendMode" aria-label="Modo de mesclagem"></select>
         <label>Opac. <input type="range" id="layerOpacity" min="0" max="100" value="100"><span id="layerOpacityVal">100%</span></label>
+      </div>
+      <div class="layer-locks" id="layerLocks">
+        <span>Bloquear:</span>
+        <button data-lock="alpha" title="Bloquear pixels transparentes (a pintura só vale onde já há imagem)">▦</button>
+        <button data-lock="pixels" title="Bloquear pixels da imagem (nenhuma ferramenta de pintura ou filtro altera)">🖌</button>
+        <button data-lock="pos" title="Bloquear posição (não deixa mover nem transformar)">✥</button>
+        <button data-lock="all" title="Bloquear tudo (Ctrl+/)">🔒</button>
       </div>
       <ul id="layerList"></ul>
       <div class="panel-actions">
