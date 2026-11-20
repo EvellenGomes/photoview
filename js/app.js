@@ -582,7 +582,7 @@
   // ---------- visualização (zoom / pan) e overlay
   const view = { zoom: 1, x: 0, y: 0 };
   const cursor = { x: 0, y: 0, in: false };
-  let antsOffset = 0, gradLine = null, textEdit = null, selDraft = null, lasso = null, qs = null;
+  let antsOffset = 0, gradLine = null, textEdit = null, selDraft = null, lasso = null, qs = null, pen = null, penEdit = null;
 
   function applyView() {
     stage.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.zoom})`;
@@ -634,6 +634,7 @@
       ants(p);
     } else if (sel) shapeAnts(sel);
     if (selDraft) shapeAnts(selDraft);
+    if (tool === 'pen' && (pen || penEdit)) drawPenOverlay(sx, sy);
     if (tool === 'shape' && drag && drag.sh) { // prévia da forma enquanto arrasta
       const dpr = devicePixelRatio || 1;
       octx.save(); octx.setTransform(dpr * z, 0, 0, dpr * z, dpr * view.x, dpr * view.y); octx.globalAlpha = 0.75; drawShape(octx, drag.sh); octx.restore();
@@ -858,19 +859,22 @@
     marquee: { shape: 'rect', mode: 'new' },
     lasso: { type: 'free', mode: 'new' },
     quick: { size: 40, tolerance: 45, mode: 'add', allLayers: false },
+    pen: { fillOn: true, strokeOn: false, strokeW: 6 },
     shape: { kind: 'rect', radius: 0, sides: 5, fillOn: true, strokeOn: false, strokeW: 6 },
     crop: { ratio: 'free' },
     wand: { tolerance: 32, contiguous: true, allLayers: false, mode: 'new' },
     text: { font: 'Arial', size: 48, bold: false },
   };
-  const TOOL_NAMES = { move: 'Mover', marquee: 'Letreiro', lasso: 'Laço', quick: 'Seleção rápida', wand: 'Varinha mágica', clone: 'Carimbo', heal: 'Pincel corretivo', spot: 'Corretivo para manchas', brush: 'Pincel', eraser: 'Borracha', bucket: 'Lata de tinta', gradient: 'Degradê', eyedropper: 'Conta-gotas', text: 'Texto', hand: 'Mão', zoom: 'Zoom', crop: 'Recortar', shape: 'Forma' };
-  const CURSORS = { move: 'move', marquee: 'crosshair', lasso: 'crosshair', quick: 'none', wand: 'crosshair', clone: 'none', heal: 'none', spot: 'none', brush: 'none', eraser: 'none', bucket: 'crosshair', gradient: 'crosshair', eyedropper: 'crosshair', text: 'text', hand: 'grab', zoom: 'zoom-in', crop: 'crosshair', shape: 'crosshair' };
+  const TOOL_NAMES = { move: 'Mover', marquee: 'Letreiro', lasso: 'Laço', quick: 'Seleção rápida', wand: 'Varinha mágica', clone: 'Carimbo', heal: 'Pincel corretivo', spot: 'Corretivo para manchas', brush: 'Pincel', eraser: 'Borracha', bucket: 'Lata de tinta', gradient: 'Degradê', eyedropper: 'Conta-gotas', text: 'Texto', hand: 'Mão', zoom: 'Zoom', crop: 'Recortar', shape: 'Forma', pen: 'Caneta' };
+  const CURSORS = { move: 'move', marquee: 'crosshair', lasso: 'crosshair', quick: 'none', wand: 'crosshair', clone: 'none', heal: 'none', spot: 'none', brush: 'none', eraser: 'none', bucket: 'crosshair', gradient: 'crosshair', eyedropper: 'crosshair', text: 'text', hand: 'grab', zoom: 'zoom-in', crop: 'crosshair', shape: 'crosshair', pen: 'crosshair' };
   let tool = 'brush';
   let spaceDown = false, panning = null, drag = null, lastPoint = null;
 
   function setTool(t) {
     commitText();
     if (xf) applyTransform(); // trocar de ferramenta confirma a transformação
+    if (pen && t !== 'pen') { if (pen.pts.length >= 2) finishPen(false); else pen = null; }
+    penEdit = null;
     lasso = null;
     tool = t;
     if (t === 'crop') initCrop(); else crop = null; // trocar de ferramenta descarta a caixa
@@ -1486,6 +1490,7 @@
       }
       c.closePath();
     } else if (kind === 'line') { c.moveTo(x, y); c.lineTo(x + w, y + h); }
+    else if (kind === 'path') pathSegs(c, sh);
   }
   function drawShape(c, sh) {
     c.save(); c.transform(...(sh.m || IDENT));
@@ -1496,6 +1501,7 @@
   }
   function renderShapeLayer(L, sh) {
     const nt = { ...sh, m: sh.m || IDENT.slice() };
+    if (nt.kind === 'path') { const b = pathBounds(nt.points); nt.x = b.x; nt.y = b.y; nt.w = b.w; nt.h = b.h; } // caixa para acerto/seleção
     const c = ctxOf(L.canvas); c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, doc.w, doc.h); c.restore();
     drawShape(c, nt); touch(L); L.shape = nt;
   }
@@ -1532,7 +1538,7 @@
     return { kind: o.kind, x, y, w, h, radius: o.radius, sides: o.sides, inner: 45, fillOn, fill: fg(), strokeOn: o.kind === 'line' || !!o.strokeOn, stroke: o.kind === 'line' ? fg() : bg(), strokeW: o.strokeW, m: IDENT.slice() };
   }
   function createShape(sh) {
-    const names = { rect: 'Retângulo', ellipse: 'Elipse', poly: 'Polígono', star: 'Estrela', line: 'Linha' };
+    const names = { rect: 'Retângulo', ellipse: 'Elipse', poly: 'Polígono', star: 'Estrela', line: 'Linha', path: 'Caminho' };
     const L = makeLayer(names[sh.kind] || 'Forma');
     renderShapeLayer(L, sh); insertLayer(L); pushHistory('Forma'); render();
   }
@@ -1559,6 +1565,189 @@
       onOk: v => { apply(v); pushHistory('Editar forma'); },
       onCancel: () => { renderShapeLayer(L, before); render(); },
     });
+  }
+
+  // ---------- caneta: caminhos de Bézier (cada âncora tem alças relativas: ix,iy de entrada e ox,oy de saída)
+  const mApply = (m, x, y) => [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]];
+  function mInverse(m) {
+    const det = m[0] * m[3] - m[1] * m[2]; if (!det) return IDENT.slice();
+    const a = m[3] / det, b = -m[1] / det, c = -m[2] / det, d = m[0] / det;
+    return [a, b, c, d, -(a * m[4] + c * m[5]), -(b * m[4] + d * m[5])];
+  }
+  function pathSegs(c, sh) {
+    const P = sh.points; if (!P || !P.length) return;
+    c.moveTo(P[0].x, P[0].y);
+    const n = sh.closed ? P.length : P.length - 1;
+    for (let i = 0; i < n; i++) {
+      const a = P[i], b = P[(i + 1) % P.length];
+      if (a.ox || a.oy || b.ix || b.iy) c.bezierCurveTo(a.x + a.ox, a.y + a.oy, b.x + b.ix, b.y + b.iy, b.x, b.y); else c.lineTo(b.x, b.y);
+    }
+    if (sh.closed) c.closePath();
+  }
+  function pathBounds(P) {
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const q of P) for (const [x, y] of [[q.x, q.y], [q.x + q.ix, q.y + q.iy], [q.x + q.ox, q.y + q.oy]]) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+    return { x: x0, y: y0, w: Math.max(1, x1 - x0), h: Math.max(1, y1 - y0) };
+  }
+  const copyShape = sh => ({ ...sh, points: sh.points.map(q => ({ ...q })) });
+  const bezPoint = (a, b, t) => {
+    const p0 = [a.x, a.y], p1 = [a.x + a.ox, a.y + a.oy], p2 = [b.x + b.ix, b.y + b.iy], p3 = [b.x, b.y], u = 1 - t;
+    return [u * u * u * p0[0] + 3 * u * u * t * p1[0] + 3 * u * t * t * p2[0] + t * t * t * p3[0], u * u * u * p0[1] + 3 * u * u * t * p1[1] + 3 * u * t * t * p2[1] + t * t * t * p3[1]];
+  };
+  // segmento mais próximo de p (em coordenadas do documento): { i, t, d }
+  function nearestSegment(sh, p) {
+    const P = sh.points, m = sh.m || IDENT, n = sh.closed ? P.length : P.length - 1; let best = null;
+    for (let i = 0; i < n; i++) for (let k = 0; k <= 24; k++) {
+      const t = k / 24, [lx, ly] = bezPoint(P[i], P[(i + 1) % P.length], t), [x, y] = mApply(m, lx, ly), d = Math.hypot(p.x - x, p.y - y);
+      if (!best || d < best.d) best = { i, t, d };
+    }
+    return best;
+  }
+  // divide o segmento i em t (de Casteljau) e insere uma âncora suave
+  function splitSeg(P, i, t) {
+    const a = P[i], b = P[(i + 1) % P.length], lerp = (u, v) => [u[0] + (v[0] - u[0]) * t, u[1] + (v[1] - u[1]) * t];
+    const p0 = [a.x, a.y], p1 = [a.x + a.ox, a.y + a.oy], p2 = [b.x + b.ix, b.y + b.iy], p3 = [b.x, b.y];
+    const q0 = lerp(p0, p1), q1 = lerp(p1, p2), q2 = lerp(p2, p3), r0 = lerp(q0, q1), r1 = lerp(q1, q2), sp = lerp(r0, r1);
+    a.ox = q0[0] - a.x; a.oy = q0[1] - a.y; b.ix = q2[0] - b.x; b.iy = q2[1] - b.y;
+    const np = { x: sp[0], y: sp[1], ix: r0[0] - sp[0], iy: r0[1] - sp[1], ox: r1[0] - sp[0], oy: r1[1] - sp[1], smooth: true };
+    if (i === P.length - 1) { P.push(np); return P.length - 1; }
+    P.splice(i + 1, 0, np); return i + 1;
+  }
+  // camada de caminho (de cima para baixo) sob o ponto: dentro do preenchimento ou perto da linha
+  function penHitPath(p) {
+    const tolDoc = 8 / view.zoom;
+    for (let i = doc.layers.length - 1; i >= 0; i--) {
+      const L = doc.layers[i], sh = L.shape;
+      if (!L.visible || !sh || sh.kind !== 'path') continue;
+      if (nearestSegment(sh, p).d <= Math.max(tolDoc, (sh.strokeW || 0) / 2 + 3)) return i;
+      if (sh.fillOn) { const [lx, ly] = mApply(mInverse(sh.m || IDENT), p.x, p.y); measureCtx.beginPath(); pathSegs(measureCtx, sh); measureCtx.closePath(); if (measureCtx.isPointInPath(lx, ly)) return i; }
+    }
+    return -1;
+  }
+  function penEditStart(i) {
+    const L = doc.layers[i];
+    if (L.lockPixels) return status('Os pixels desta camada estão bloqueados');
+    if (!shapeValid(L)) { L.shape = null; refreshPanels(); return status('Este caminho foi rasterizado por outra edição e não pode mais ser editado'); }
+    doc.active = i; refreshPanels();
+    penEdit = { L, sh: copyShape(L.shape), sel: -1 };
+    drawOverlay(); status('Editando o caminho: arraste âncoras e alças · clique no traço adiciona ponto · Alt+clique converte · Delete remove · Esc sai');
+  }
+  function penApplyEdit(commit, label) {
+    renderShapeLayer(penEdit.L, copyShape(penEdit.sh));
+    if (commit) { pushHistory(label || 'Editar caminho'); render(); } else requestRender();
+    drawOverlay();
+  }
+  function penDown(p, e) {
+    const tol = 7 / view.zoom;
+    if (penEdit) {
+      const { sh } = penEdit, m = sh.m || IDENT, inv = mInverse(m), P = sh.points;
+      for (let i = 0; i < P.length; i++) {
+        const a = P[i], [ax, ay] = mApply(m, a.x, a.y);
+        for (const side of ['i', 'o']) {
+          if (!a[side + 'x'] && !a[side + 'y']) continue;
+          const [hx, hy] = mApply(m, a.x + a[side + 'x'], a.y + a[side + 'y']);
+          if (Math.hypot(p.x - hx, p.y - hy) <= tol) { penEdit.sel = i; drag = { tool: 'pen', kind: 'handle', idx: i, side, moved: false }; drawOverlay(); return; }
+        }
+        if (Math.hypot(p.x - ax, p.y - ay) <= tol) {
+          penEdit.sel = i;
+          if (e.altKey) { // Alt+clique: converte entre ponto suave (com alças) e de canto (sem alças)
+            if (a.ix || a.iy || a.ox || a.oy) { a.ix = a.iy = a.ox = a.oy = 0; a.smooth = false; }
+            else { const pv = P[(i - 1 + P.length) % P.length], nx = P[(i + 1) % P.length], vx = nx.x - pv.x, vy = nx.y - pv.y, len = Math.hypot(vx, vy) || 1, hl = Math.min(60, len / 4); a.ox = vx / len * hl; a.oy = vy / len * hl; a.ix = -a.ox; a.iy = -a.oy; a.smooth = true; }
+            penApplyEdit(true, 'Converter ponto'); return;
+          }
+          drag = { tool: 'pen', kind: 'anchor', idx: i, a: p, orig: { x: a.x, y: a.y }, moved: false }; drawOverlay(); return;
+        }
+      }
+      const seg = nearestSegment(sh, p);
+      if (seg && seg.d <= tol * 1.2) { penEdit.sel = splitSeg(P, seg.i, seg.t); penApplyEdit(true, 'Adicionar ponto'); return; }
+      const hi = penHitPath(p);
+      if (hi >= 0 && doc.layers[hi] !== penEdit.L) { penEditStart(hi); return; }
+      penEdit = null; // clicou fora: sai da edição e começa um caminho novo
+    }
+    if (!pen) {
+      const hi = penHitPath(p);
+      if (hi >= 0) { penEditStart(hi); return; }
+      pen = { pts: [], cur: p };
+    }
+    const f = pen.pts[0], last = pen.pts[pen.pts.length - 1];
+    if (f && pen.pts.length >= 2 && Math.hypot(p.x - f.x, p.y - f.y) <= tol) { finishPen(true); return; } // clique no 1º ponto fecha
+    if (last && Math.hypot(p.x - last.x, p.y - last.y) < 1) return; // duplo clique: não duplica o ponto
+    pen.pts.push({ x: p.x, y: p.y, ix: 0, iy: 0, ox: 0, oy: 0, smooth: false });
+    drag = { tool: 'pen', kind: 'new', idx: pen.pts.length - 1, a: p, moved: false };
+    drawOverlay();
+  }
+  function penMove(p, e) {
+    if (drag.kind === 'new') {
+      const a = pen.pts[drag.idx], dx = p.x - a.x, dy = p.y - a.y;
+      if (Math.hypot(dx, dy) * view.zoom < 3) return;
+      a.ox = dx; a.oy = dy; a.ix = -dx; a.iy = -dy; a.smooth = true; drag.moved = true; drawOverlay(); return;
+    }
+    if (!penEdit) return;
+    const sh = penEdit.sh, m = sh.m || IDENT, inv = mInverse(m), a = sh.points[drag.idx];
+    drag.moved = true;
+    if (drag.kind === 'anchor') {
+      const dx = p.x - drag.a.x, dy = p.y - drag.a.y; // delta do documento → local (só a parte linear da matriz)
+      a.x = drag.orig.x + inv[0] * dx + inv[2] * dy; a.y = drag.orig.y + inv[1] * dx + inv[3] * dy;
+    } else {
+      const [lx, ly] = mApply(inv, p.x, p.y), side = drag.side, other = side === 'i' ? 'o' : 'i';
+      a[side + 'x'] = lx - a.x; a[side + 'y'] = ly - a.y;
+      if (e.altKey) a.smooth = false; // Alt: alças independentes
+      else if (a.smooth) { // suave: a alça oposta fica alinhada e mantém o próprio comprimento
+        const hl = Math.hypot(a[side + 'x'], a[side + 'y']) || 1, ol = Math.hypot(a[other + 'x'], a[other + 'y']) || hl;
+        a[other + 'x'] = -a[side + 'x'] / hl * ol; a[other + 'y'] = -a[side + 'y'] / hl * ol;
+      }
+    }
+    penApplyEdit(false);
+  }
+  function penUp() {
+    if (drag === null) return;
+  }
+  function finishPen(closed) {
+    const pts = pen.pts.map(q => ({ ...q })); pen = null;
+    if (pts.length < 2) { drawOverlay(); return; }
+    const o = opts.pen;
+    const sh = { kind: 'path', points: pts, closed, x: 0, y: 0, w: 1, h: 1, fillOn: closed && o.fillOn, fill: fg(), strokeOn: !closed || !!o.strokeOn, stroke: closed ? bg() : fg(), strokeW: o.strokeW, m: IDENT.slice() };
+    if (closed && !sh.fillOn && !sh.strokeOn) sh.strokeOn = true;
+    createShape(sh); drawOverlay();
+  }
+  function pathMask(sh) {
+    const c = newCanvas(doc.w, doc.h), x = c.getContext('2d');
+    x.transform(...(sh.m || IDENT)); x.beginPath(); pathSegs(x, sh); x.closePath(); x.fillStyle = '#fff'; x.fill();
+    return c;
+  }
+  function penToSelection() {
+    let sh = null;
+    if (pen && pen.pts.length >= 3) { sh = { points: pen.pts.map(q => ({ ...q })), closed: true, m: IDENT.slice() }; pen = null; }
+    else if (penEdit) sh = penEdit.sh;
+    else if (active().shape && active().shape.kind === 'path') sh = active().shape;
+    if (!sh) return status('Desenhe um caminho com pelo menos 3 pontos, ou selecione uma camada de caminho');
+    sel = maskSel(pathMask(sh)); drawOverlay();
+    status(sel ? 'Seleção: ' + sel.w + ' × ' + sel.h + ' px' : 'A seleção ficou vazia');
+  }
+  function drawPenOverlay(sx, sy) {
+    const dpr = devicePixelRatio || 1, z = view.zoom;
+    const curve = (sh, color) => {
+      octx.save(); octx.setTransform(dpr * z, 0, 0, dpr * z, dpr * view.x, dpr * view.y); octx.transform(...(sh.m || IDENT));
+      octx.beginPath(); pathSegs(octx, sh); octx.lineWidth = 3 / z; octx.strokeStyle = '#000'; octx.stroke();
+      octx.lineWidth = 1.2 / z; octx.strokeStyle = color; octx.stroke(); octx.restore();
+    };
+    const knob = (X, Y, on) => { octx.fillStyle = on ? '#3b82f6' : '#fff'; octx.fillRect(X - 3.5, Y - 3.5, 7, 7); octx.strokeStyle = '#000'; octx.lineWidth = 1; octx.strokeRect(X - 3.5, Y - 3.5, 7, 7); };
+    const handle = (ax, ay, hx, hy) => {
+      octx.beginPath(); octx.moveTo(ax, ay); octx.lineTo(hx, hy); octx.strokeStyle = '#3b82f6'; octx.lineWidth = 1; octx.stroke();
+      octx.beginPath(); octx.arc(hx, hy, 3, 0, Math.PI * 2); octx.fillStyle = '#fff'; octx.fill(); octx.strokeStyle = '#000'; octx.stroke();
+    };
+    const points = (P, m, selIdx) => P.forEach((q, i) => {
+      const [ax, ay] = mApply(m, q.x, q.y), X = sx(ax), Y = sy(ay);
+      for (const side of ['i', 'o']) if (q[side + 'x'] || q[side + 'y']) { const [hx, hy] = mApply(m, q.x + q[side + 'x'], q.y + q[side + 'y']); handle(X, Y, sx(hx), sy(hy)); }
+      knob(X, Y, i === selIdx);
+    });
+    octx.save();
+    if (pen && pen.pts.length) {
+      const live = pen.cur ? [...pen.pts, { x: pen.cur.x, y: pen.cur.y, ix: 0, iy: 0, ox: 0, oy: 0 }] : pen.pts;
+      curve({ points: live, closed: false, m: IDENT }, '#fff');
+      points(pen.pts, IDENT, pen.pts.length - 1);
+    } else if (penEdit) { curve(penEdit.sh, '#3b82f6'); points(penEdit.sh.points, penEdit.sh.m || IDENT, penEdit.sel); }
+    octx.restore();
   }
 
   // ---------- texto
@@ -1641,6 +1830,7 @@
       case 'marquee':
         drag = { tool, a: p, moved: false, mode: selModeFrom(e, opts.marquee.mode) };
         break;
+      case 'pen': penDown(p, e); break;
       case 'shape': drag = { tool, a: p, moved: false }; break;
       case 'quick': {
         const o = opts.quick, src = o.allLayers ? flattenCanvas(null) : active().canvas;
@@ -1729,6 +1919,7 @@
     if (!drag && tool === 'crop' && crop) { ws.style.cursor = spaceDown ? 'grab' : cropCursor(cropHit(p)); return; }
     if (drag && drag.tool === 'crop') { cropDrag(p, e); drawOverlay(); return; }
     if (!drag && tool === 'lasso' && lasso && lasso.poly) { lasso.cur = p; drawOverlay(); return; }
+    if (!drag && tool === 'pen' && pen) { pen.cur = p; drawOverlay(); return; }
     if (!drag) { if (tool === 'brush' || tool === 'eraser' || tool === 'spot' || tool === 'quick' || isCloneTool()) drawOverlay(); return; }
     switch (drag.tool) {
       case 'brush': case 'eraser': {
@@ -1740,6 +1931,7 @@
       case 'gradient':
         gradLine.b = p; drawGradient(); requestRender();
         break;
+      case 'pen': penMove(p, e); break;
       case 'shape': {
         const o = opts.shape; let w = p.x - drag.a.x, h = p.y - drag.a.y;
         if (Math.abs(w) < 2 && Math.abs(h) < 2 && !drag.moved) return;
@@ -1903,6 +2095,10 @@
         gradLine = null; render();
         break;
       case 'lasso': finishLasso(); break;
+      case 'pen':
+        if (d.kind === 'anchor' || d.kind === 'handle') { if (d.moved && penEdit) penApplyEdit(true, d.kind === 'anchor' ? 'Mover ponto' : 'Ajustar curva'); }
+        drawOverlay();
+        break;
       case 'shape':
         if (d.sh && (d.sh.kind === 'line' ? Math.hypot(d.sh.w, d.sh.h) >= 3 : d.sh.w >= 2 && d.sh.h >= 2)) createShape(d.sh);
         else if (!d.moved) { const hi = shapeHit(d.a); if (hi >= 0) { doc.active = hi; refreshPanels(); editShapeLayer(doc.layers[hi]); } } // clique numa forma: edita
@@ -1939,7 +2135,7 @@
     }
   }
   ws.addEventListener('pointerup', endPointer);
-  ws.addEventListener('dblclick', e => { if (tool === 'lasso' && lasso && lasso.poly) return finishLasso(); if (xf && cropHit(docPt(e), xf.box).mode === 'move') return applyTransform(); if (tool === 'crop' && crop && cropHit(docPt(e)).mode === 'move') applyCrop(); });
+  ws.addEventListener('dblclick', e => { if (tool === 'pen' && pen) return finishPen(false); if (tool === 'lasso' && lasso && lasso.poly) return finishLasso(); if (xf && cropHit(docPt(e), xf.box).mode === 'move') return applyTransform(); if (tool === 'crop' && crop && cropHit(docPt(e)).mode === 'move') applyCrop(); });
   ws.addEventListener('pointercancel', endPointer);
   ws.addEventListener('pointerleave', () => { cursor.in = false; drawOverlay(); });
 
@@ -2577,6 +2773,7 @@
     editText: () => editTextLayer(active()),
     lockAll: () => toggleLock('all'),
     editShape: () => editShapeLayer(active()),
+    pathToSel: () => penToSelection(),
     freeTransform: () => startTransform(),
     newAdjPick: () => openDialog({
       title: 'Nova camada de ajuste', okLabel: 'Criar',
@@ -2894,6 +3091,11 @@
         select('Modo', 'mode', SEL_MODES);
         hint('Shift+arrastar adiciona · Alt subtrai · Ctrl+D desmarca · Ctrl+J camada via cópia');
         break;
+      case 'pen':
+        check('Preencher (cor principal)', 'fillOn'); check('Contorno (cor secundária)', 'strokeOn'); range('Espessura', 'strokeW', 1, 60, 'px');
+        button('Fazer seleção (Ctrl+Enter)', () => penToSelection());
+        hint('Clique = ponto de canto · arraste = curva · clique no 1º ponto fecha · duplo clique/Enter termina aberto · clique num caminho para editar');
+        break;
       case 'shape':
         select('Forma', 'kind', [['rect', 'Retângulo'], ['ellipse', 'Elipse'], ['poly', 'Polígono'], ['star', 'Estrela'], ['line', 'Linha']], () => buildOptions());
         if (o.kind === 'rect') range('Canto', 'radius', 0, 300, 'px');
@@ -2970,7 +3172,7 @@
   document.querySelectorAll('#toolbar [data-tool]').forEach(b => b.addEventListener('click', () => setTool(b.dataset.tool)));
 
   // ---------- teclado
-  const TOOL_KEYS = { v: 'move', m: 'marquee', w: 'wand', l: 'lasso', s: 'clone', j: 'spot', b: 'brush', e: 'eraser', g: 'bucket', i: 'eyedropper', t: 'text', h: 'hand', z: 'zoom', c: 'crop', u: 'shape' };
+  const TOOL_KEYS = { v: 'move', m: 'marquee', w: 'wand', l: 'lasso', s: 'clone', j: 'spot', b: 'brush', e: 'eraser', g: 'bucket', i: 'eyedropper', t: 'text', h: 'hand', z: 'zoom', c: 'crop', u: 'shape', p: 'pen' };
   window.addEventListener('keydown', e => {
     if (!modal.hidden) { if (e.key === 'Escape') { e.preventDefault(); dlg && dlg.cancel(); } return; }
     if (e.target.matches && e.target.matches('input, textarea, select, [contenteditable="true"]')) return;
@@ -2980,6 +3182,20 @@
       if (k === 'escape') { e.preventDefault(); return cancelTransform(); }
       const arrows = { arrowleft: [-1, 0], arrowright: [1, 0], arrowup: [0, -1], arrowdown: [0, 1] };
       if (arrows[k]) { e.preventDefault(); const st = e.shiftKey ? 10 : 1; xf.box.cx += arrows[k][0] * st; xf.box.cy += arrows[k][1] * st; renderXf(false); drawOverlay(); return; }
+    }
+    if (tool === 'pen' && (pen || penEdit)) {
+      if (k === 'enter') { e.preventDefault(); if (mod) return penToSelection(); if (pen) finishPen(false); else { penEdit = null; drawOverlay(); } return; }
+      if (k === 'escape') { e.preventDefault(); pen = null; penEdit = null; return drawOverlay(); }
+      if (k === 'backspace' || k === 'delete') {
+        e.preventDefault();
+        if (pen) { pen.pts.pop(); if (!pen.pts.length) pen = null; return drawOverlay(); }
+        if (penEdit && penEdit.sel >= 0) {
+          penEdit.sh.points.splice(penEdit.sel, 1); penEdit.sel = -1;
+          if (penEdit.sh.points.length < 2) { const L = penEdit.L; penEdit = null; doc.active = doc.layers.indexOf(L); L.shape = null; commands.delLayer(); return; }
+          return penApplyEdit(true, 'Excluir ponto');
+        }
+        return;
+      }
     }
     if (lasso) {
       if (k === 'enter') { e.preventDefault(); return finishLasso(); }
