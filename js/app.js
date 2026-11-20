@@ -405,7 +405,7 @@
   // ---------- visualização (zoom / pan) e overlay
   const view = { zoom: 1, x: 0, y: 0 };
   const cursor = { x: 0, y: 0, in: false };
-  let antsOffset = 0, gradLine = null, textEdit = null, selDraft = null, lasso = null;
+  let antsOffset = 0, gradLine = null, textEdit = null, selDraft = null, lasso = null, qs = null;
 
   function applyView() {
     stage.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.zoom})`;
@@ -489,7 +489,7 @@
         octx.setLineDash([]);
       }
     }
-    if (cursor.in && (tool === 'brush' || tool === 'eraser' || tool === 'spot' || isCloneTool()) && !panning && !xf) {
+    if (cursor.in && (tool === 'brush' || tool === 'eraser' || tool === 'spot' || tool === 'quick' || isCloneTool()) && !panning && !xf) {
       const r = Math.max(1, opts[tool].size / 2 * z);
       octx.beginPath(); octx.arc(sx(cursor.x), sy(cursor.y), r, 0, Math.PI * 2);
       octx.strokeStyle = 'rgba(0,0,0,.8)'; octx.lineWidth = 2; octx.stroke();
@@ -644,12 +644,13 @@
     gradient: { type: 'linear', opacity: 100 },
     marquee: { shape: 'rect', mode: 'new' },
     lasso: { type: 'free', mode: 'new' },
+    quick: { size: 40, tolerance: 45, mode: 'add', allLayers: false },
     crop: { ratio: 'free' },
     wand: { tolerance: 32, contiguous: true, allLayers: false, mode: 'new' },
     text: { font: 'Arial', size: 48, bold: false },
   };
-  const TOOL_NAMES = { move: 'Mover', marquee: 'Letreiro', lasso: 'Laço', wand: 'Varinha mágica', clone: 'Carimbo', heal: 'Pincel corretivo', spot: 'Corretivo para manchas', brush: 'Pincel', eraser: 'Borracha', bucket: 'Lata de tinta', gradient: 'Degradê', eyedropper: 'Conta-gotas', text: 'Texto', hand: 'Mão', zoom: 'Zoom', crop: 'Recortar' };
-  const CURSORS = { move: 'move', marquee: 'crosshair', lasso: 'crosshair', wand: 'crosshair', clone: 'none', heal: 'none', spot: 'none', brush: 'none', eraser: 'none', bucket: 'crosshair', gradient: 'crosshair', eyedropper: 'crosshair', text: 'text', hand: 'grab', zoom: 'zoom-in', crop: 'crosshair' };
+  const TOOL_NAMES = { move: 'Mover', marquee: 'Letreiro', lasso: 'Laço', quick: 'Seleção rápida', wand: 'Varinha mágica', clone: 'Carimbo', heal: 'Pincel corretivo', spot: 'Corretivo para manchas', brush: 'Pincel', eraser: 'Borracha', bucket: 'Lata de tinta', gradient: 'Degradê', eyedropper: 'Conta-gotas', text: 'Texto', hand: 'Mão', zoom: 'Zoom', crop: 'Recortar' };
+  const CURSORS = { move: 'move', marquee: 'crosshair', lasso: 'crosshair', quick: 'none', wand: 'crosshair', clone: 'none', heal: 'none', spot: 'none', brush: 'none', eraser: 'none', bucket: 'crosshair', gradient: 'crosshair', eyedropper: 'crosshair', text: 'text', hand: 'grab', zoom: 'zoom-in', crop: 'crosshair' };
   let tool = 'brush';
   let spaceDown = false, panning = null, drag = null, lastPoint = null;
 
@@ -1230,6 +1231,13 @@
       case 'marquee':
         drag = { tool, a: p, moved: false, mode: selModeFrom(e, opts.marquee.mode) };
         break;
+      case 'quick': {
+        const o = opts.quick, src = o.allLayers ? flattenCanvas(null) : active().canvas;
+        qs = { mode: selModeFrom(e, o.mode), base: sel ? selMaskCanvas() : null, seed: newCanvas(doc.w, doc.h), data: ctxOf(src).getImageData(0, 0, doc.w, doc.h).data,
+          last: p, bb: { x0: p.x, y0: p.y, x1: p.x, y1: p.y }, t: 0 };
+        qsSeedTo(p, p); qsUpdate(); drag = { tool };
+        break;
+      }
       case 'lasso': {
         const o = opts.lasso;
         if (o.type === 'free') { lasso = { pts: [p], mode: selModeFrom(e, o.mode), poly: false }; drag = { tool }; break; }
@@ -1298,7 +1306,7 @@
     if (!drag && tool === 'crop' && crop) { ws.style.cursor = spaceDown ? 'grab' : cropCursor(cropHit(p)); return; }
     if (drag && drag.tool === 'crop') { cropDrag(p, e); drawOverlay(); return; }
     if (!drag && tool === 'lasso' && lasso && lasso.poly) { lasso.cur = p; drawOverlay(); return; }
-    if (!drag) { if (tool === 'brush' || tool === 'eraser' || tool === 'spot' || isCloneTool()) drawOverlay(); return; }
+    if (!drag) { if (tool === 'brush' || tool === 'eraser' || tool === 'spot' || tool === 'quick' || isCloneTool()) drawOverlay(); return; }
     switch (drag.tool) {
       case 'brush': case 'eraser': {
         const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
@@ -1309,6 +1317,14 @@
       case 'gradient':
         gradLine.b = p; drawGradient(); requestRender();
         break;
+      case 'quick': {
+        const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
+        for (const ce of (evs.length ? evs : [e])) { const q = docPt(ce); qsSeedTo(qs.last, q); qs.last = q; }
+        const now = performance.now();
+        if (now - qs.t > 90) { qsUpdate(); qs.t = performance.now(); } // ao vivo, no máximo ~10x por segundo
+        drawOverlay();
+        break;
+      }
       case 'lasso': {
         const l = lasso.pts[lasso.pts.length - 1];
         if (Math.hypot(p.x - l.x, p.y - l.y) * view.zoom >= 1.5) { lasso.pts.push(p); drawOverlay(); }
@@ -1342,6 +1358,53 @@
     }
   });
 
+  /* Seleção rápida: o pincel marca sementes; a região cresce pelos vizinhos de cor parecida com a
+     média das sementes, parando em bordas (salto brusco entre pixels vizinhos). A busca fica numa
+     janela em volta do traço para não vazar pela imagem toda. */
+  function qsSeedTo(a, b) {
+    const c = qs.seed.getContext('2d'), r = opts.quick.size / 2;
+    c.lineCap = 'round'; c.lineJoin = 'round'; c.strokeStyle = c.fillStyle = '#fff'; c.lineWidth = opts.quick.size;
+    c.beginPath(); c.moveTo(a.x, a.y); c.lineTo(b.x, b.y); c.stroke();
+    c.beginPath(); c.arc(b.x, b.y, r, 0, Math.PI * 2); c.fill();
+    const bb = qs.bb; bb.x0 = Math.min(bb.x0, b.x - r); bb.y0 = Math.min(bb.y0, b.y - r); bb.x1 = Math.max(bb.x1, b.x + r); bb.y1 = Math.max(bb.y1, b.y + r);
+  }
+  function qsUpdate() {
+    if (!qs) return;
+    const w = doc.w, h = doc.h, { data, bb } = qs, tol = opts.quick.tolerance, margin = Math.ceil(opts.quick.size * 3 + 10);
+    const x0 = Math.max(0, Math.floor(bb.x0 - margin)), y0 = Math.max(0, Math.floor(bb.y0 - margin));
+    const x1 = Math.min(w - 1, Math.ceil(bb.x1 + margin)), y1 = Math.min(h - 1, Math.ceil(bb.y1 + margin));
+    const W = x1 - x0 + 1, H = y1 - y0 + 1, n = W * H;
+    if (W < 1 || H < 1) return;
+    const sd = ctxOf(qs.seed).getImageData(x0, y0, W, H).data, vis = new Uint8Array(n), queue = new Int32Array(n);
+    let qh = 0, qt = 0, cnt = 0, m0 = 0, m1 = 0, m2 = 0, m3 = 0;
+    const px = p => ((y0 + ((p / W) | 0)) * w + x0 + (p % W)) * 4;
+    for (let p = 0; p < n; p++) if (sd[p * 4 + 3] > 128) { vis[p] = 1; queue[qt++] = p; const i = px(p); m0 += data[i]; m1 += data[i + 1]; m2 += data[i + 2]; m3 += data[i + 3]; cnt++; }
+    if (!cnt) return;
+    m0 /= cnt; m1 /= cnt; m2 /= cnt; m3 /= cnt;
+    let v = 0; for (let k = 0; k < qt; k++) { const i = px(queue[k]); v += (data[i] - m0) ** 2 + (data[i + 1] - m1) ** 2 + (data[i + 2] - m2) ** 2; }
+    const thr = tol * 1.6 + 1.5 * Math.sqrt(v / (cnt * 3)), edge = Math.max(10, tol * 0.55);
+    const dist = i => Math.sqrt((data[i] - m0) ** 2 + (data[i + 1] - m1) ** 2 + (data[i + 2] - m2) ** 2 + (data[i + 3] - m3) ** 2);
+    const step = (i, j) => Math.max(Math.abs(data[i] - data[j]), Math.abs(data[i + 1] - data[j + 1]), Math.abs(data[i + 2] - data[j + 2]), Math.abs(data[i + 3] - data[j + 3]));
+    while (qh < qt) {
+      const p = queue[qh++], x = p % W, y = (p / W) | 0, ip = px(p);
+      for (let d = 0; d < 4; d++) {
+        const nx = d === 0 ? x - 1 : d === 1 ? x + 1 : x, ny = d === 2 ? y - 1 : d === 3 ? y + 1 : y;
+        if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+        const q = ny * W + nx; if (vis[q]) continue;
+        const iq = px(q);
+        if (dist(iq) <= thr && step(iq, ip) <= edge) { vis[q] = 1; queue[qt++] = q; }
+      }
+    }
+    const mask = new Uint8Array(w * h);
+    for (let p = 0; p < n; p++) if (vis[p]) mask[(y0 + ((p / W) | 0)) * w + x0 + (p % W)] = 1;
+    const grown = maskToCanvas(mask);
+    let out = grown;
+    if (qs.mode === 'sub') { if (!qs.base) return; out = cloneCanvas(qs.base); const x = out.getContext('2d'); x.globalCompositeOperation = 'destination-out'; x.drawImage(grown, 0, 0); }
+    else if (qs.mode === 'add' && qs.base) { out = cloneCanvas(qs.base); out.getContext('2d').drawImage(grown, 0, 0); }
+    sel = maskSel(out);
+    drawOverlay();
+  }
+
   // fecha o laço: preenche o polígono e combina com a seleção conforme o modo
   function finishLasso() {
     if (!lasso) return;
@@ -1370,6 +1433,10 @@
         gradLine = null; render();
         break;
       case 'lasso': finishLasso(); break;
+      case 'quick':
+        qsUpdate(); qs = null; drawOverlay();
+        status(sel ? 'Seleção: ' + sel.w + ' × ' + sel.h + ' px' : 'Seleção vazia');
+        break;
       case 'marquee':
         if (d.mode === 'new') { if (!d.moved || !sel || sel.w < 1 || sel.h < 1) sel = null; }
         else if (selDraft && selDraft.w >= 1 && selDraft.h >= 1) combineSel(rasterShape(selDraft), d.mode);
@@ -2187,6 +2254,12 @@
         select('Modo', 'mode', SEL_MODES);
         hint('Shift+arrastar adiciona · Alt subtrai · Ctrl+D desmarca · Ctrl+J camada via cópia');
         break;
+      case 'quick':
+        range('Tamanho', 'size', 3, 300, 'px'); range('Sensibilidade', 'tolerance', 5, 120);
+        select('Modo', 'mode', [['add', 'Adicionar'], ['new', 'Nova seleção'], ['sub', 'Subtrair (Alt)']]);
+        check('Todas as camadas', 'allLayers');
+        hint('Pinte dentro do objeto: a seleção cresce até as bordas · Alt subtrai · [ ] muda o tamanho');
+        break;
       case 'lasso':
         select('Tipo', 'type', [['free', 'Mão livre'], ['poly', 'Poligonal']], () => { lasso = null; drawOverlay(); buildOptions(); });
         select('Modo', 'mode', SEL_MODES);
@@ -2295,6 +2368,7 @@
       e.preventDefault(); return;
     } else if (k === 'g' && e.shiftKey) { setTool('gradient'); return; }
     else if (k === 'j' && e.shiftKey) { setTool('heal'); return; }
+    else if (k === 'w' && e.shiftKey) { setTool('quick'); return; }
     else if (TOOL_KEYS[k] && !e.altKey) { setTool(TOOL_KEYS[k]); return; }
     else if (k === '[' || k === ']') {
       const o = opts[tool]; if (!o || o.size === undefined) return;
