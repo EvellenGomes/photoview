@@ -550,6 +550,10 @@
       ants(p);
     } else if (sel) shapeAnts(sel);
     if (selDraft) shapeAnts(selDraft);
+    if (tool === 'shape' && drag && drag.sh) { // prévia da forma enquanto arrasta
+      const dpr = devicePixelRatio || 1;
+      octx.save(); octx.setTransform(dpr * z, 0, 0, dpr * z, dpr * view.x, dpr * view.y); octx.globalAlpha = 0.75; drawShape(octx, drag.sh); octx.restore();
+    }
     if (lasso && lasso.pts.length) {
       // rascunho do laço: linha do caminho + fechamento tracejado + vértices (poligonal)
       const pts = lasso.pts.slice(); if (lasso.poly && lasso.cur) pts.push(lasso.cur);
@@ -604,7 +608,7 @@
         const same = p && p.rev === L.rev;
         const canvas = same ? p.canvas : cloneCanvas(L.canvas);
         const mask = same ? p.mask : (L.mask ? cloneCanvas(L.mask) : null);
-        return { id: L.id, name: L.name, visible: L.visible, opacity: L.opacity, blend: L.blend, fx: L.fx || null, adj: L.adj || null, text: L.text || null, group: !!L.group, pid: L.pid || 0, collapsed: !!L.collapsed, clip: !!L.clip, maskOn: L.maskOn, maskEdit: L.maskEdit, rev: L.rev, canvas, mask };
+        return { id: L.id, name: L.name, visible: L.visible, opacity: L.opacity, blend: L.blend, fx: L.fx || null, adj: L.adj || null, text: L.text || null, shape: L.shape || null, group: !!L.group, pid: L.pid || 0, collapsed: !!L.collapsed, clip: !!L.clip, maskOn: L.maskOn, maskEdit: L.maskEdit, rev: L.rev, canvas, mask };
       }),
     };
   }
@@ -687,7 +691,7 @@
   function saveProject() {
     const data = {
       app: 'photoview', version: 1, w: doc.w, h: doc.h, active: doc.active,
-      layers: doc.layers.map(L => ({ name: L.name, visible: L.visible, opacity: L.opacity, blend: L.blend, fx: L.fx || null, adj: L.adj || null, text: L.text || null, id: L.id, group: !!L.group, pid: L.pid || 0, collapsed: !!L.collapsed, clip: !!L.clip, maskOn: L.maskOn, mask: L.mask ? L.mask.toDataURL('image/png') : null, data: L.canvas.toDataURL('image/png') })),
+      layers: doc.layers.map(L => ({ name: L.name, visible: L.visible, opacity: L.opacity, blend: L.blend, fx: L.fx || null, adj: L.adj || null, text: L.text || null, shape: L.shape || null, id: L.id, group: !!L.group, pid: L.pid || 0, collapsed: !!L.collapsed, clip: !!L.clip, maskOn: L.maskOn, mask: L.mask ? L.mask.toDataURL('image/png') : null, data: L.canvas.toDataURL('image/png') })),
     };
     download(new Blob([JSON.stringify(data)], { type: 'application/json' }), `${doc.name}.pview`);
     status('Projeto salvo');
@@ -704,7 +708,7 @@
       doc.name = baseName(file); sel = null;
       doc.layers = data.layers.map((l, i) => {
         const L = makeLayer(l.name);
-        Object.assign(L, { visible: l.visible, opacity: l.opacity, blend: l.blend, fx: l.fx || null, adj: l.adj || null, text: l.text || null, maskEdit: !!l.adj, group: !!l.group, collapsed: !!l.collapsed, clip: !!l.clip, _oid: l.id, _opid: l.pid || 0 });
+        Object.assign(L, { visible: l.visible, opacity: l.opacity, blend: l.blend, fx: l.fx || null, adj: l.adj || null, text: l.text || null, shape: l.shape || null, maskEdit: !!l.adj, group: !!l.group, collapsed: !!l.collapsed, clip: !!l.clip, _oid: l.id, _opid: l.pid || 0 });
         if (l.group) L.canvas = newCanvas(1, 1);
         ctxOf(L.canvas).drawImage(imgs[i], 0, 0);
         if (masks[i]) { L.mask = newMask(false); ctxOf(L.mask).drawImage(masks[i], 0, 0); L.maskOn = l.maskOn !== false; }
@@ -744,12 +748,13 @@
     marquee: { shape: 'rect', mode: 'new' },
     lasso: { type: 'free', mode: 'new' },
     quick: { size: 40, tolerance: 45, mode: 'add', allLayers: false },
+    shape: { kind: 'rect', radius: 0, sides: 5, fillOn: true, strokeOn: false, strokeW: 6 },
     crop: { ratio: 'free' },
     wand: { tolerance: 32, contiguous: true, allLayers: false, mode: 'new' },
     text: { font: 'Arial', size: 48, bold: false },
   };
-  const TOOL_NAMES = { move: 'Mover', marquee: 'Letreiro', lasso: 'Laço', quick: 'Seleção rápida', wand: 'Varinha mágica', clone: 'Carimbo', heal: 'Pincel corretivo', spot: 'Corretivo para manchas', brush: 'Pincel', eraser: 'Borracha', bucket: 'Lata de tinta', gradient: 'Degradê', eyedropper: 'Conta-gotas', text: 'Texto', hand: 'Mão', zoom: 'Zoom', crop: 'Recortar' };
-  const CURSORS = { move: 'move', marquee: 'crosshair', lasso: 'crosshair', quick: 'none', wand: 'crosshair', clone: 'none', heal: 'none', spot: 'none', brush: 'none', eraser: 'none', bucket: 'crosshair', gradient: 'crosshair', eyedropper: 'crosshair', text: 'text', hand: 'grab', zoom: 'zoom-in', crop: 'crosshair' };
+  const TOOL_NAMES = { move: 'Mover', marquee: 'Letreiro', lasso: 'Laço', quick: 'Seleção rápida', wand: 'Varinha mágica', clone: 'Carimbo', heal: 'Pincel corretivo', spot: 'Corretivo para manchas', brush: 'Pincel', eraser: 'Borracha', bucket: 'Lata de tinta', gradient: 'Degradê', eyedropper: 'Conta-gotas', text: 'Texto', hand: 'Mão', zoom: 'Zoom', crop: 'Recortar', shape: 'Forma' };
+  const CURSORS = { move: 'move', marquee: 'crosshair', lasso: 'crosshair', quick: 'none', wand: 'crosshair', clone: 'none', heal: 'none', spot: 'none', brush: 'none', eraser: 'none', bucket: 'crosshair', gradient: 'crosshair', eyedropper: 'crosshair', text: 'text', hand: 'grab', zoom: 'zoom-in', crop: 'crosshair', shape: 'crosshair' };
   let tool = 'brush';
   let spaceDown = false, panning = null, drag = null, lastPoint = null;
 
@@ -1153,7 +1158,7 @@
     }
     // máscara vinculada: transforma junto quando a camada inteira é transformada
     const mask = !onMask && !sel && L.mask ? cloneCanvas(L.mask) : null;
-    xf = { L, target, base, float, hole, mask, textOk: !!(L.text && !sel && !onMask && textValid(L)), src: r, box: { cx: r.x + r.w / 2, cy: r.y + r.h / 2, w: r.w, h: r.h, angle: 0 }, fx: 1, fy: 1, selWas: sel };
+    xf = { L, target, base, float, hole, mask, textOk: !!(L.text && !sel && !onMask && textValid(L)), shapeOk: !!(L.shape && !sel && !onMask && shapeValid(L)), src: r, box: { cx: r.x + r.w / 2, cy: r.y + r.h / 2, w: r.w, h: r.h, angle: 0 }, fx: 1, fy: 1, selWas: sel };
     sel = null;
     renderXf(false); buildOptions(); drawOverlay();
     status('Transformação livre: arraste as alças · Enter aplica · Esc cancela');
@@ -1181,8 +1186,10 @@
     const changed = b.angle || xf.fx < 0 || xf.fy < 0 || Math.abs(b.w - s.w) > .01 || Math.abs(b.h - s.h) > .01 || Math.abs(b.cx - (s.x + s.w / 2)) > .01 || Math.abs(b.cy - (s.y + s.h / 2)) > .01;
     if (changed) renderXf(true);
     const xL = xf.L, xT = xL.text, asText = changed && xf.textOk && xT, M = asText ? xfMatrix(xf) : null;
+    const xS = xL.shape, asShape = changed && xf.shapeOk && xS, M2 = asShape ? xfMatrix(xf) : null;
     xf = null;
     if (asText) renderTextLayer(xL, { ...xT, m: matMul(M, xT.m || IDENT) });
+    if (asShape) renderShapeLayer(xL, { ...xS, m: matMul(M2, xS.m || IDENT) }); // a forma é redesenhada nítida na nova escala/ângulo
     if (changed) pushHistory('Transformação livre');
     buildOptions(); render();
   }
@@ -1281,7 +1288,13 @@
     const fresh = newCanvas(doc.w, doc.h); drawText(ctxOf(fresh), t);
     const a = ctxOf(L.canvas).getImageData(0, 0, doc.w, doc.h).data, b = ctxOf(fresh).getImageData(0, 0, doc.w, doc.h).data;
     let diff = 0, ink = 0;
-    for (let i = 3; i < a.length; i += 4) { if (b[i] > 8) ink++; if (Math.abs(a[i] - b[i]) > 40) diff++; }
+    for (let i = 0; i < a.length; i += 4) {
+      const ab = b[i + 3]; if (ab > 8) ink++;
+      // diferença de transparência, ou de cor onde os dois são opacos (pintar por cima de uma área opaca também rasteriza)
+      let bad = Math.abs(a[i + 3] - ab) > 40;
+      if (!bad && ab > 200 && a[i + 3] > 200 && (Math.abs(a[i] - b[i]) > 40 || Math.abs(a[i + 1] - b[i + 1]) > 40 || Math.abs(a[i + 2] - b[i + 2]) > 40)) bad = true;
+      if (bad) diff++;
+    }
     return diff <= Math.max(60, ink * 0.01);
   }
   // camada de texto (de cima para baixo) sob o ponto, ou -1
@@ -1340,6 +1353,97 @@
       onCancel: () => { renderTextLayer(L, before); render(); },
     });
     setTimeout(() => ta && ta.focus(), 30);
+  }
+
+  // ---------- formas vetoriais: guardadas como dados (tipo, retângulo, cores, contorno, matriz) e redesenhadas nítidas
+  function shapePath(c, sh) {
+    const { kind, x, y, w, h } = sh, cx = x + w / 2, cy = y + h / 2, rx = Math.abs(w) / 2, ry = Math.abs(h) / 2;
+    c.beginPath();
+    if (kind === 'rect') {
+      const r = Math.max(0, Math.min(sh.radius || 0, Math.abs(w) / 2, Math.abs(h) / 2));
+      if (r > 0) c.roundRect(x, y, w, h, r); else c.rect(x, y, w, h);
+    } else if (kind === 'ellipse') c.ellipse(cx, cy, Math.max(0.01, rx), Math.max(0.01, ry), 0, 0, Math.PI * 2);
+    else if (kind === 'poly' || kind === 'star') {
+      const n = Math.max(3, sh.sides | 0), pts = kind === 'star' ? n * 2 : n;
+      for (let i = 0; i < pts; i++) {
+        const a = -Math.PI / 2 + i * 2 * Math.PI / pts, f = kind === 'star' && i % 2 ? (sh.inner == null ? 45 : sh.inner) / 100 : 1;
+        const px = cx + Math.cos(a) * rx * f, py = cy + Math.sin(a) * ry * f;
+        if (i) c.lineTo(px, py); else c.moveTo(px, py);
+      }
+      c.closePath();
+    } else if (kind === 'line') { c.moveTo(x, y); c.lineTo(x + w, y + h); }
+  }
+  function drawShape(c, sh) {
+    c.save(); c.transform(...(sh.m || IDENT));
+    shapePath(c, sh);
+    if (sh.fillOn && sh.kind !== 'line') { c.fillStyle = sh.fill; c.fill(); }
+    if (sh.strokeOn || sh.kind === 'line') { c.lineWidth = Math.max(0.5, sh.strokeW || 1); c.strokeStyle = sh.stroke; c.lineJoin = 'round'; c.lineCap = 'round'; c.stroke(); }
+    c.restore();
+  }
+  function renderShapeLayer(L, sh) {
+    const nt = { ...sh, m: sh.m || IDENT.slice() };
+    const c = ctxOf(L.canvas); c.save(); c.setTransform(1, 0, 0, 1, 0, 0); c.clearRect(0, 0, doc.w, doc.h); c.restore();
+    drawShape(c, nt); touch(L); L.shape = nt;
+  }
+  // a forma só continua editável se os pixels da camada ainda são os dela
+  function shapeValid(L) {
+    const t = L.shape; if (!t) return false;
+    const fresh = newCanvas(doc.w, doc.h); drawShape(ctxOf(fresh), t);
+    const a = ctxOf(L.canvas).getImageData(0, 0, doc.w, doc.h).data, b = ctxOf(fresh).getImageData(0, 0, doc.w, doc.h).data;
+    let diff = 0, ink = 0;
+    for (let i = 0; i < a.length; i += 4) {
+      const ab = b[i + 3]; if (ab > 8) ink++;
+      // diferença de transparência, ou de cor onde os dois são opacos (pintar por cima de uma área opaca também rasteriza)
+      let bad = Math.abs(a[i + 3] - ab) > 40;
+      if (!bad && ab > 200 && a[i + 3] > 200 && (Math.abs(a[i] - b[i]) > 40 || Math.abs(a[i + 1] - b[i + 1]) > 40 || Math.abs(a[i + 2] - b[i + 2]) > 40)) bad = true;
+      if (bad) diff++;
+    }
+    return diff <= Math.max(60, ink * 0.01);
+  }
+  function shapeHit(p) {
+    for (let i = doc.layers.length - 1; i >= 0; i--) {
+      const L = doc.layers[i], t = L.shape;
+      if (!L.visible || !t) continue;
+      const [a, b, c, d, e, f] = t.m || IDENT, det = a * d - b * c;
+      if (!det) continue;
+      const x = (d * (p.x - e) - c * (p.y - f)) / det, y = (-b * (p.x - e) + a * (p.y - f)) / det, pad = Math.max(6 / view.zoom, (t.strokeW || 0) / 2 + 2);
+      const x0 = Math.min(t.x, t.x + t.w), x1 = Math.max(t.x, t.x + t.w), y0 = Math.min(t.y, t.y + t.h), y1 = Math.max(t.y, t.y + t.h);
+      if (x >= x0 - pad && x <= x1 + pad && y >= y0 - pad && y <= y1 + pad) return i;
+    }
+    return -1;
+  }
+  function makeShapeFrom(o, x, y, w, h) {
+    if (o.kind !== 'line') { if (w < 0) { x += w; w = -w; } if (h < 0) { y += h; h = -h; } }
+    const fillOn = o.kind !== 'line' && (o.fillOn || !o.strokeOn); // nunca invisível
+    return { kind: o.kind, x, y, w, h, radius: o.radius, sides: o.sides, inner: 45, fillOn, fill: fg(), strokeOn: o.kind === 'line' || !!o.strokeOn, stroke: o.kind === 'line' ? fg() : bg(), strokeW: o.strokeW, m: IDENT.slice() };
+  }
+  function createShape(sh) {
+    const names = { rect: 'Retângulo', ellipse: 'Elipse', poly: 'Polígono', star: 'Estrela', line: 'Linha' };
+    const L = makeLayer(names[sh.kind] || 'Forma');
+    renderShapeLayer(L, sh); insertLayer(L); pushHistory('Forma'); render();
+  }
+  function editShapeLayer(L) {
+    if (!L || !L.shape) return status('A camada ativa não é uma forma');
+    if (!shapeValid(L)) { L.shape = null; refreshPanels(); return status('Esta forma foi rasterizada por outra edição e não pode mais ser editada'); }
+    commitText();
+    const before = L.shape, k = before.kind, fields = [];
+    if (k !== 'line') {
+      fields.push({ key: 'fillOn', label: 'Preencher', type: 'checkbox', value: before.fillOn });
+      fields.push({ key: 'fill', label: 'Cor do preenchimento', type: 'color', value: before.fill });
+      fields.push({ key: 'strokeOn', label: 'Contorno', type: 'checkbox', value: before.strokeOn });
+    }
+    fields.push({ key: 'stroke', label: k === 'line' ? 'Cor da linha' : 'Cor do contorno', type: 'color', value: before.stroke });
+    fields.push({ key: 'strokeW', label: 'Espessura', type: 'range', min: 1, max: 100, step: 1, value: before.strokeW || 1 });
+    if (k === 'rect') fields.push({ key: 'radius', label: 'Canto arredondado', type: 'range', min: 0, max: Math.max(1, Math.floor(Math.min(Math.abs(before.w), Math.abs(before.h)) / 2)), step: 1, value: Math.min(before.radius || 0, Math.floor(Math.min(Math.abs(before.w), Math.abs(before.h)) / 2)) });
+    if (k === 'poly' || k === 'star') fields.push({ key: 'sides', label: 'Lados / pontas', type: 'range', min: 3, max: 24, step: 1, value: before.sides });
+    if (k === 'star') fields.push({ key: 'inner', label: 'Profundidade (%)', type: 'range', min: 10, max: 90, step: 1, value: before.inner == null ? 45 : before.inner });
+    const apply = v => { const t = { ...before, ...v }; if (t.kind !== 'line' && !t.fillOn && !t.strokeOn) t.fillOn = true; renderShapeLayer(L, t); render(); };
+    openDialog({
+      title: 'Editar forma — ' + L.name, preview: true, fields,
+      onInput: apply,
+      onOk: v => { apply(v); pushHistory('Editar forma'); },
+      onCancel: () => { renderShapeLayer(L, before); render(); },
+    });
   }
 
   // ---------- texto
@@ -1422,6 +1526,7 @@
       case 'marquee':
         drag = { tool, a: p, moved: false, mode: selModeFrom(e, opts.marquee.mode) };
         break;
+      case 'shape': drag = { tool, a: p, moved: false }; break;
       case 'quick': {
         const o = opts.quick, src = o.allLayers ? flattenCanvas(null) : active().canvas;
         qs = { mode: selModeFrom(e, o.mode), base: sel ? selMaskCanvas() : null, seed: newCanvas(doc.w, doc.h), data: ctxOf(src).getImageData(0, 0, doc.w, doc.h).data,
@@ -1518,6 +1623,19 @@
       case 'gradient':
         gradLine.b = p; drawGradient(); requestRender();
         break;
+      case 'shape': {
+        const o = opts.shape; let w = p.x - drag.a.x, h = p.y - drag.a.y;
+        if (Math.abs(w) < 2 && Math.abs(h) < 2 && !drag.moved) return;
+        drag.moved = true;
+        if (e.shiftKey) {
+          if (o.kind === 'line') { const ang = Math.round(Math.atan2(h, w) / (Math.PI / 4)) * (Math.PI / 4), len = Math.hypot(w, h); w = Math.cos(ang) * len; h = Math.sin(ang) * len; }
+          else { const m = Math.max(Math.abs(w), Math.abs(h)); w = Math.sign(w || 1) * m; h = Math.sign(h || 1) * m; }
+        }
+        let x = drag.a.x, y = drag.a.y;
+        if (e.altKey && o.kind !== 'line') { x -= w; y -= h; w *= 2; h *= 2; } // a partir do centro
+        drag.sh = makeShapeFrom(o, x, y, w, h); drawOverlay();
+        break;
+      }
       case 'quick': {
         const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
         for (const ce of (evs.length ? evs : [e])) { const q = docPt(ce); qsSeedTo(qs.last, q); qs.last = q; }
@@ -1668,6 +1786,11 @@
         gradLine = null; render();
         break;
       case 'lasso': finishLasso(); break;
+      case 'shape':
+        if (d.sh && (d.sh.kind === 'line' ? Math.hypot(d.sh.w, d.sh.h) >= 3 : d.sh.w >= 2 && d.sh.h >= 2)) createShape(d.sh);
+        else if (!d.moved) { const hi = shapeHit(d.a); if (hi >= 0) { doc.active = hi; refreshPanels(); editShapeLayer(doc.layers[hi]); } } // clique numa forma: edita
+        drawOverlay();
+        break;
       case 'quick':
         qsUpdate(); qs = null; drawOverlay();
         status(sel ? 'Seleção: ' + sel.w + ' × ' + sel.h + ' px' : 'Seleção vazia');
@@ -1680,11 +1803,13 @@
         break;
       case 'move':
         if (d.moved && d.group) {
-          for (const it of d.items) { touch(it.L); if (it.L.text) it.L.text = { ...it.L.text, m: matMul([1, 0, 0, 1, d.dx || 0, d.dy || 0], it.L.text.m || IDENT) }; }
+          for (const it of d.items) { touch(it.L); if (it.L.text) it.L.text = { ...it.L.text, m: matMul([1, 0, 0, 1, d.dx || 0, d.dy || 0], it.L.text.m || IDENT) };
+            if (it.L.shape) it.L.shape = { ...it.L.shape, m: matMul([1, 0, 0, 1, d.dx || 0, d.dy || 0], it.L.shape.m || IDENT) }; }
           pushHistory('Mover grupo');
         } else if (d.moved) {
           const L = active(); touch(L);
           if (L.text && d.tc === L.canvas && !d.sel0) L.text = { ...L.text, m: matMul([1, 0, 0, 1, d.dx || 0, d.dy || 0], L.text.m || IDENT) };
+          if (L.shape && d.tc === L.canvas && !d.sel0) L.shape = { ...L.shape, m: matMul([1, 0, 0, 1, d.dx || 0, d.dy || 0], L.shape.m || IDENT) };
           pushHistory('Mover');
         }
         break;
@@ -2017,7 +2142,7 @@
       const nc = newCanvas(nw, nh), c = ctxOf(nc);
       c.imageSmoothingQuality = 'high';
       draw(c, L.canvas);
-      L.canvas = nc; L.text = null; // rotacionar/redimensionar o documento rasteriza o texto
+      L.canvas = nc; L.text = null; L.shape = null; // rotacionar/redimensionar o documento rasteriza o texto
       if (L.mask) {
         // área nova da máscara fica visível (branca), como "revelar tudo"
         const nm = newCanvas(nw, nh), mc = ctxOf(nm);
@@ -2179,7 +2304,7 @@
         const block = blockOf(L), map = new Map();
         const copies = block.map(o => {
           const N = makeLayer(o === L ? o.name + ' cópia' : o.name, o.group ? newCanvas(1, 1) : cloneCanvas(o.canvas));
-          Object.assign(N, { opacity: o.opacity, blend: o.blend, visible: o.visible, fx: o.fx || null, adj: o.adj || null, text: o.text || null, mask: o.mask ? cloneCanvas(o.mask) : null, maskOn: o.maskOn, maskEdit: false, group: !!o.group, collapsed: !!o.collapsed, clip: !!o.clip });
+          Object.assign(N, { opacity: o.opacity, blend: o.blend, visible: o.visible, fx: o.fx || null, adj: o.adj || null, text: o.text || null, shape: o.shape || null, mask: o.mask ? cloneCanvas(o.mask) : null, maskOn: o.maskOn, maskEdit: false, group: !!o.group, collapsed: !!o.collapsed, clip: !!o.clip });
           map.set(o.id, N); return N;
         });
         copies.forEach((N, k) => { const o = block[k]; N.pid = o === L ? pidOf(L) : map.get(o.pid).id; });
@@ -2191,7 +2316,7 @@
       const N = makeLayer(r ? `${L.name} (cópia da seleção)` : `${L.name} cópia`);
       const c = ctxOf(N.canvas);
       withSel(c, x => x.drawImage(L.canvas, 0, 0));
-      if (!r) Object.assign(N, { opacity: L.opacity, blend: L.blend, visible: L.visible, fx: L.fx || null, adj: L.adj || null, text: L.text || null, clip: !!L.clip, mask: L.mask ? cloneCanvas(L.mask) : null, maskOn: L.maskOn, maskEdit: L.maskEdit });
+      if (!r) Object.assign(N, { opacity: L.opacity, blend: L.blend, visible: L.visible, fx: L.fx || null, adj: L.adj || null, text: L.text || null, shape: L.shape || null, clip: !!L.clip, mask: L.mask ? cloneCanvas(L.mask) : null, maskOn: L.maskOn, maskEdit: L.maskEdit });
       insertLayer(N); pushHistory(r ? 'Camada via cópia' : 'Duplicar camada'); render();
     },
     delLayer: () => {
@@ -2234,7 +2359,7 @@
         }
         c.save(); c.globalAlpha = L.opacity; c.globalCompositeOperation = L.blend; c.drawImage(src, 0, 0); c.restore();
       }
-      touch(B); B.text = null;
+      touch(B); B.text = null; B.shape = null;
       doc.layers.splice(doc.active, 1); doc.active--;
       pushHistory('Mesclar abaixo'); render();
     },
@@ -2317,6 +2442,7 @@
     editContent: () => { if (active().adj) return status('Camada de ajuste: só a máscara é editável'); active().maskEdit = false; refreshPanels(); },
     cropTool: () => setTool('crop'),
     editText: () => editTextLayer(active()),
+    editShape: () => editShapeLayer(active()),
     freeTransform: () => startTransform(),
     newAdjPick: () => openDialog({
       title: 'Nova camada de ajuste', okLabel: 'Criar',
@@ -2466,7 +2592,7 @@
       meta.textContent = (hasFx(L) ? 'fx ' : '') + (L.opacity < 1 ? Math.round(L.opacity * 100) + '%' : '');
       meta.title = hasFx(L) ? 'Clique duas vezes na miniatura para editar o estilo' : '';
       th.title = L.group ? 'Grupo · duplo clique: recolher/expandir' : 'Conteúdo da camada · duplo clique: estilos de camada';
-      th.ondblclick = e => { e.stopPropagation(); if (L.group) { L.collapsed = !L.collapsed; renderLayers(); } else L.adj ? editAdj(L, false) : L.text ? editTextLayer(L) : run('layerStyle'); };
+      th.ondblclick = e => { e.stopPropagation(); if (L.group) { L.collapsed = !L.collapsed; renderLayers(); } else L.adj ? editAdj(L, false) : L.text ? editTextLayer(L) : L.shape ? editShapeLayer(L) : run('layerStyle'); };
       li.append(eye, th);
       let mt = null;
       if (L.mask) {
@@ -2621,6 +2747,14 @@
         select('Modo', 'mode', SEL_MODES);
         hint('Shift+arrastar adiciona · Alt subtrai · Ctrl+D desmarca · Ctrl+J camada via cópia');
         break;
+      case 'shape':
+        select('Forma', 'kind', [['rect', 'Retângulo'], ['ellipse', 'Elipse'], ['poly', 'Polígono'], ['star', 'Estrela'], ['line', 'Linha']], () => buildOptions());
+        if (o.kind === 'rect') range('Canto', 'radius', 0, 300, 'px');
+        if (o.kind === 'poly' || o.kind === 'star') range('Lados', 'sides', 3, 16);
+        if (o.kind !== 'line') check('Preencher (cor principal)', 'fillOn');
+        check('Contorno (cor secundária)', 'strokeOn'); range('Espessura', 'strokeW', 1, 60, 'px');
+        hint('Arraste para desenhar · Shift = proporção / 45° · Alt = a partir do centro · clique numa forma para editar');
+        break;
       case 'quick':
         range('Tamanho', 'size', 3, 300, 'px'); range('Sensibilidade', 'tolerance', 5, 120);
         select('Modo', 'mode', [['add', 'Adicionar'], ['new', 'Nova seleção'], ['sub', 'Subtrair (Alt)']]);
@@ -2689,7 +2823,7 @@
   document.querySelectorAll('#toolbar [data-tool]').forEach(b => b.addEventListener('click', () => setTool(b.dataset.tool)));
 
   // ---------- teclado
-  const TOOL_KEYS = { v: 'move', m: 'marquee', w: 'wand', l: 'lasso', s: 'clone', j: 'spot', b: 'brush', e: 'eraser', g: 'bucket', i: 'eyedropper', t: 'text', h: 'hand', z: 'zoom', c: 'crop' };
+  const TOOL_KEYS = { v: 'move', m: 'marquee', w: 'wand', l: 'lasso', s: 'clone', j: 'spot', b: 'brush', e: 'eraser', g: 'bucket', i: 'eyedropper', t: 'text', h: 'hand', z: 'zoom', c: 'crop', u: 'shape' };
   window.addEventListener('keydown', e => {
     if (!modal.hidden) { if (e.key === 'Escape') { e.preventDefault(); dlg && dlg.cancel(); } return; }
     if (e.target.matches && e.target.matches('input, textarea, select, [contenteditable="true"]')) return;

@@ -11,6 +11,7 @@ Editor de imagens web no estilo Photoshop, feito com HTML, CSS e JavaScript puro
 - Ou qualquer servidor estático na pasta (ex.: `npx serve .`)
 
 ## O que já faz
+- Formas vetoriais (U): retângulo (com canto arredondado), elipse, polígono, estrela e linha; arraste para desenhar (Shift = proporção ou 45°, Alt = a partir do centro); preenchimento e contorno editáveis depois (clique na forma com a ferramenta, duplo clique na miniatura ou Camada › Editar forma); mover e transformação livre mantêm a forma nítida
 - Máscara de recorte (Ctrl+Alt+G ou Alt+clique na camada no painel): a camada só aparece onde a camada de baixo tem pixels (foto dentro de forma, texto ou logo); vale também para camadas de ajuste; a base com opacidade, modo e visibilidade comanda o conjunto
 - Grupos de camadas (Ctrl+G agrupa; Ctrl/Shift+clique seleciona várias no painel; Ctrl+Shift+G desagrupa): pastas aninháveis que recolhem, com visibilidade e opacidade do grupo valendo para os filhos, arrastar para dentro/fora, mover, duplicar, excluir e mesclar o grupo
 - Camadas: nova, duplicar, camada via cópia (Ctrl+J), excluir, mesclar abaixo, achatar, reordenar (arrastar), visibilidade, opacidade, 16 modos de mesclagem, renomear (duplo clique)
