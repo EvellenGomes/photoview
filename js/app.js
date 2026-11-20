@@ -46,6 +46,7 @@
     outerGlow: { on: false, color: '#ffffbe', opacity: 75, spread: 10, size: 15 },
     innerShadow: { on: false, color: '#000000', opacity: 75, angle: 120, distance: 5, size: 5 },
     colorOverlay: { on: false, color: '#ff0000', opacity: 100 },
+    satin: { on: false, color: '#000000', opacity: 50, angle: 19, distance: 11, size: 14, invert: 'yes' },
     gradOverlay: { on: false, style: 'linear', color1: '#ffffff', color2: '#000000', opacity: 100, angle: 90, scale: 100, reverse: 'no' },
     bevel: { on: false, style: 'inner', technique: 'smooth', direction: 'up', depth: 100, size: 8, soften: 1, angle: 120, hlColor: '#ffffff', hlOpacity: 75, shColor: '#000000', shOpacity: 75 },
     stroke: { on: false, color: '#000000', opacity: 100, size: 3, position: 'outside' },
@@ -151,6 +152,29 @@
         tc.fillStyle = g; tc.fillRect(0, 0, w, h);
         o.globalAlpha = go.opacity / 100; o.drawImage(t, 0, 0); o.globalAlpha = 1;
       }
+    }
+    const sa = fx.satin; // layers antigas podem não ter o efeito
+    if (sa && sa.on) {
+      /* Cetim: duas cópias do formato deslocadas em sentidos opostos e desfocadas; a diferença entre elas vira
+         um sombreado suave e ondulado por dentro da forma (multiplicado, como no Photoshop). */
+      const ang = sa.angle * Math.PI / 180, dx = Math.round(-Math.cos(ang) * sa.distance), dy = Math.round(Math.sin(ang) * sa.distance);
+      const A1 = new Float32Array(n), A2 = new Float32Array(n);
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        const p = y * w + x, x1 = x - dx, y1 = y - dy, x2 = x + dx, y2 = y + dy;
+        if (x1 >= 0 && x1 < w && y1 >= 0 && y1 < h) A1[p] = a[(y1 * w + x1) * 4 + 3] / 255;
+        if (x2 >= 0 && x2 < w && y2 >= 0 && y2 < h) A2[p] = a[(y2 * w + x2) * 4 + 3] / 255;
+      }
+      if (sa.size > 0.3) { blurFloat(A1, w, h, sa.size / 2); blurFloat(A2, w, h, sa.size / 2); }
+      const [sr, sg, sb] = hexToRgb(sa.color), inv = sa.invert === 'yes', img = new ImageData(w, h);
+      for (let p = 0; p < n; p++) {
+        const af = a[p * 4 + 3] / 255;
+        if (af <= 0.004) continue;
+        let d = Math.abs(A1[p] - A2[p]); if (inv) d = 1 - d;
+        const al = Math.min(1, d) * sa.opacity / 100 * af;
+        if (al > 0.002) { const i = p * 4; img.data[i] = sr; img.data[i + 1] = sg; img.data[i + 2] = sb; img.data[i + 3] = al * 255; }
+      }
+      const sc = newCanvas(w, h); sc.getContext('2d').putImageData(img, 0, 0);
+      o.save(); o.globalCompositeOperation = 'multiply'; o.drawImage(sc, 0, 0); o.restore();
     }
     const bv = fx.bevel; // layers antigas podem não ter o efeito
     if (bv && bv.on) {
@@ -2277,6 +2301,9 @@
       ['color1', 'Cor inicial', 'color'], ['color2', 'Cor final', 'color'],
       ['opacity', 'Opacidade %', 0, 100], ['angle', 'Ângulo ° (0 = esquerda→direita, 90 = cima→baixo)', -180, 180],
       ['scale', 'Escala %', 10, 300], ['reverse', 'Inverter cores', [['no', 'Não'], ['yes', 'Sim']]]]],
+    ['satin', 'Cetim', [
+      ['color', 'Cor', 'color'], ['opacity', 'Opacidade %', 0, 100], ['angle', 'Ângulo °', -180, 180],
+      ['distance', 'Distância', 0, 100], ['size', 'Tamanho', 0, 100], ['invert', 'Inverter', [['yes', 'Sim'], ['no', 'Não']]]]],
     ['bevel', 'Chanfro e relevo', [
       ['style', 'Estilo', [['inner', 'Chanfro interno'], ['outer', 'Chanfro externo'], ['emboss', 'Relevo']]],
       ['technique', 'Técnica', [['smooth', 'Suave'], ['chisel', 'Cinzel']]],
