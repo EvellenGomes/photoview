@@ -46,6 +46,7 @@
     outerGlow: { on: false, color: '#ffffbe', opacity: 75, spread: 10, size: 15 },
     innerShadow: { on: false, color: '#000000', opacity: 75, angle: 120, distance: 5, size: 5 },
     colorOverlay: { on: false, color: '#ff0000', opacity: 100 },
+    bevel: { on: false, style: 'inner', technique: 'smooth', direction: 'up', depth: 100, size: 8, soften: 1, angle: 120, hlColor: '#ffffff', hlOpacity: 75, shColor: '#000000', shOpacity: 75 },
     stroke: { on: false, color: '#000000', opacity: 100, size: 3, position: 'outside' },
   };
   const hasFx = L => !!L.fx && Object.values(L.fx).some(e => e.on);
@@ -124,6 +125,39 @@
       tc.drawImage(src, 0, 0); tc.globalCompositeOperation = 'source-in';
       tc.fillStyle = fx.colorOverlay.color; tc.fillRect(0, 0, w, h);
       o.globalAlpha = fx.colorOverlay.opacity / 100; o.drawImage(t, 0, 0); o.globalAlpha = 1;
+    }
+    const bv = fx.bevel; // layers antigas podem não ter o efeito
+    if (bv && bv.on) {
+      /* Chanfro e relevo: a altura sobe da borda para dentro (interno), para fora (externo) ou dos dois lados (relevo);
+         a luz bate na inclinação da superfície: lado voltado para a luz ganha realce, o oposto ganha sombra. */
+      const size = Math.max(1, bv.size), dI = bv.style !== 'outer' ? dIn() : null, dO = bv.style !== 'inner' ? dOut() : null;
+      const hmap = new Float32Array(n);
+      for (let p = 0; p < n; p++) {
+        let hv;
+        if (bv.style === 'inner') hv = inside[p] ? Math.min(1, dI[p] / size) : 0;
+        else if (bv.style === 'outer') hv = inside[p] ? 1 : Math.max(0, 1 - dO[p] / size);
+        else hv = inside[p] ? 0.5 + Math.min(0.5, dI[p] / (2 * size)) : 0.5 - Math.min(0.5, dO[p] / (2 * size));
+        hmap[p] = bv.technique === 'chisel' ? hv : Math.sqrt(Math.max(0, 1 - (1 - hv) * (1 - hv))); // suave = quarto de círculo
+      }
+      if (bv.soften > 0.3) blurFloat(hmap, w, h, bv.soften);
+      const ang = bv.angle * Math.PI / 180, lx = Math.cos(ang), ly = -Math.sin(ang);
+      const k = bv.depth / 100 * size * 0.5 * (bv.direction === 'down' ? -1 : 1);
+      const [hr, hg, hb] = hexToRgb(bv.hlColor), [sr, sg, sb] = hexToRgb(bv.shColor), hlO = bv.hlOpacity / 100, shO = bv.shOpacity / 100;
+      const hi = new ImageData(w, h), si = new ImageData(w, h);
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        const p = y * w + x, af = a[p * 4 + 3] / 255, mk = bv.style === 'inner' ? af : bv.style === 'outer' ? 1 - af : 1;
+        if (mk <= 0.004) continue;
+        const gx = (hmap[x < w - 1 ? p + 1 : p] - hmap[x > 0 ? p - 1 : p]) * k, gy = (hmap[y < h - 1 ? p + w : p] - hmap[y > 0 ? p - w : p]) * k;
+        const sh = -(gx * lx + gy * ly), i = p * 4;
+        if (sh > 0.004) { hi.data[i] = hr; hi.data[i + 1] = hg; hi.data[i + 2] = hb; hi.data[i + 3] = Math.min(1, sh) * hlO * mk * 255; }
+        else if (sh < -0.004) { si.data[i] = sr; si.data[i + 1] = sg; si.data[i + 2] = sb; si.data[i + 3] = Math.min(1, -sh) * shO * mk * 255; }
+      }
+      const hc = newCanvas(w, h), sc = newCanvas(w, h);
+      hc.getContext('2d').putImageData(hi, 0, 0); sc.getContext('2d').putImageData(si, 0, 0);
+      o.save();
+      o.globalCompositeOperation = 'multiply'; o.drawImage(sc, 0, 0);
+      o.globalCompositeOperation = 'screen'; o.drawImage(hc, 0, 0);
+      o.restore();
     }
     if (st.on && st.position !== 'outside') {
       const d = dIn();
@@ -2212,6 +2246,13 @@
     ['outerGlow', 'Brilho externo', [['color', 'Cor', 'color'], ['opacity', 'Opacidade %', 0, 100], ['spread', 'Espalhamento %', 0, 100], ['size', 'Tamanho', 0, 100]]],
     ['innerShadow', 'Sombra interna', [['color', 'Cor', 'color'], ['opacity', 'Opacidade %', 0, 100], ['angle', 'Ângulo °', -180, 180], ['distance', 'Distância', 0, 100], ['size', 'Tamanho', 0, 100]]],
     ['colorOverlay', 'Sobreposição de cor', [['color', 'Cor', 'color'], ['opacity', 'Opacidade %', 0, 100]]],
+    ['bevel', 'Chanfro e relevo', [
+      ['style', 'Estilo', [['inner', 'Chanfro interno'], ['outer', 'Chanfro externo'], ['emboss', 'Relevo']]],
+      ['technique', 'Técnica', [['smooth', 'Suave'], ['chisel', 'Cinzel']]],
+      ['direction', 'Direção', [['up', 'Para cima'], ['down', 'Para baixo']]],
+      ['depth', 'Profundidade %', 1, 300], ['size', 'Tamanho', 1, 60], ['soften', 'Suavizar', 0, 16], ['angle', 'Ângulo °', -180, 180],
+      ['hlColor', 'Cor do realce', 'color'], ['hlOpacity', 'Opacidade do realce %', 0, 100],
+      ['shColor', 'Cor da sombra', 'color'], ['shOpacity', 'Opacidade da sombra %', 0, 100]]],
     ['stroke', 'Traço (contorno)', [['color', 'Cor', 'color'], ['opacity', 'Opacidade %', 0, 100], ['size', 'Tamanho', 1, 100], ['position', 'Posição', [['outside', 'Fora'], ['center', 'Centro'], ['inside', 'Dentro']]]]],
   ];
 
