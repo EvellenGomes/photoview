@@ -405,7 +405,7 @@
   // ---------- visualização (zoom / pan) e overlay
   const view = { zoom: 1, x: 0, y: 0 };
   const cursor = { x: 0, y: 0, in: false };
-  let antsOffset = 0, gradLine = null, textEdit = null, selDraft = null;
+  let antsOffset = 0, gradLine = null, textEdit = null, selDraft = null, lasso = null;
 
   function applyView() {
     stage.style.transform = `translate(${view.x}px, ${view.y}px) scale(${view.zoom})`;
@@ -457,6 +457,17 @@
       ants(p);
     } else if (sel) shapeAnts(sel);
     if (selDraft) shapeAnts(selDraft);
+    if (lasso && lasso.pts.length) {
+      // rascunho do laço: linha do caminho + fechamento tracejado + vértices (poligonal)
+      const pts = lasso.pts.slice(); if (lasso.poly && lasso.cur) pts.push(lasso.cur);
+      const path = () => { octx.beginPath(); pts.forEach((q, i) => i ? octx.lineTo(sx(q.x), sy(q.y)) : octx.moveTo(sx(q.x), sy(q.y))); };
+      octx.save(); octx.lineJoin = 'round';
+      path(); octx.strokeStyle = '#000'; octx.lineWidth = 3; octx.stroke();
+      path(); octx.strokeStyle = '#fff'; octx.lineWidth = 1; octx.stroke();
+      if (pts.length > 2) { octx.beginPath(); octx.moveTo(sx(pts[pts.length - 1].x), sy(pts[pts.length - 1].y)); octx.lineTo(sx(pts[0].x), sy(pts[0].y)); octx.setLineDash([4, 4]); octx.strokeStyle = '#fff'; octx.lineWidth = 1; octx.stroke(); octx.setLineDash([]); }
+      if (lasso.poly) lasso.pts.forEach((q, i) => { const X = sx(q.x), Y = sy(q.y); octx.fillStyle = i ? '#fff' : '#3b82f6'; octx.fillRect(X - 3, Y - 3, 6, 6); octx.strokeStyle = '#000'; octx.lineWidth = 1; octx.strokeRect(X - 3.5, Y - 3.5, 7, 7); });
+      octx.restore();
+    }
     if (tool === 'crop' && crop) drawCropOverlay(sx, sy);
     if (xf) drawXfOverlay(sx, sy);
     if (gradLine) {
@@ -632,18 +643,20 @@
     bucket: { tolerance: 32, contiguous: true, opacity: 100 },
     gradient: { type: 'linear', opacity: 100 },
     marquee: { shape: 'rect', mode: 'new' },
+    lasso: { type: 'free', mode: 'new' },
     crop: { ratio: 'free' },
     wand: { tolerance: 32, contiguous: true, allLayers: false, mode: 'new' },
     text: { font: 'Arial', size: 48, bold: false },
   };
-  const TOOL_NAMES = { move: 'Mover', marquee: 'Letreiro', wand: 'Varinha mágica', clone: 'Carimbo', heal: 'Pincel corretivo', spot: 'Corretivo para manchas', brush: 'Pincel', eraser: 'Borracha', bucket: 'Lata de tinta', gradient: 'Degradê', eyedropper: 'Conta-gotas', text: 'Texto', hand: 'Mão', zoom: 'Zoom', crop: 'Recortar' };
-  const CURSORS = { move: 'move', marquee: 'crosshair', wand: 'crosshair', clone: 'none', heal: 'none', spot: 'none', brush: 'none', eraser: 'none', bucket: 'crosshair', gradient: 'crosshair', eyedropper: 'crosshair', text: 'text', hand: 'grab', zoom: 'zoom-in', crop: 'crosshair' };
+  const TOOL_NAMES = { move: 'Mover', marquee: 'Letreiro', lasso: 'Laço', wand: 'Varinha mágica', clone: 'Carimbo', heal: 'Pincel corretivo', spot: 'Corretivo para manchas', brush: 'Pincel', eraser: 'Borracha', bucket: 'Lata de tinta', gradient: 'Degradê', eyedropper: 'Conta-gotas', text: 'Texto', hand: 'Mão', zoom: 'Zoom', crop: 'Recortar' };
+  const CURSORS = { move: 'move', marquee: 'crosshair', lasso: 'crosshair', wand: 'crosshair', clone: 'none', heal: 'none', spot: 'none', brush: 'none', eraser: 'none', bucket: 'crosshair', gradient: 'crosshair', eyedropper: 'crosshair', text: 'text', hand: 'grab', zoom: 'zoom-in', crop: 'crosshair' };
   let tool = 'brush';
   let spaceDown = false, panning = null, drag = null, lastPoint = null;
 
   function setTool(t) {
     commitText();
     if (xf) applyTransform(); // trocar de ferramenta confirma a transformação
+    lasso = null;
     tool = t;
     if (t === 'crop') initCrop(); else crop = null; // trocar de ferramenta descarta a caixa
     document.querySelectorAll('#toolbar [data-tool]').forEach(b => b.classList.toggle('active', b.dataset.tool === t));
@@ -1217,6 +1230,17 @@
       case 'marquee':
         drag = { tool, a: p, moved: false, mode: selModeFrom(e, opts.marquee.mode) };
         break;
+      case 'lasso': {
+        const o = opts.lasso;
+        if (o.type === 'free') { lasso = { pts: [p], mode: selModeFrom(e, o.mode), poly: false }; drag = { tool }; break; }
+        if (!lasso) lasso = { pts: [], mode: selModeFrom(e, o.mode), poly: true, cur: p };
+        const f = lasso.pts[0];
+        if (f && lasso.pts.length >= 3 && Math.hypot((p.x - f.x) * view.zoom, (p.y - f.y) * view.zoom) < 8) { finishLasso(); break; } // clique no 1º ponto fecha
+        const last = lasso.pts[lasso.pts.length - 1];
+        if (!last || Math.hypot(p.x - last.x, p.y - last.y) * view.zoom >= 2) lasso.pts.push(p);
+        drawOverlay();
+        break;
+      }
       case 'wand': {
         const px = Math.floor(p.x), py = Math.floor(p.y);
         if (px < 0 || py < 0 || px >= doc.w || py >= doc.h) break;
@@ -1273,6 +1297,7 @@
     if (drag && drag.tool === 'xf') { xfDrag(p, e); return; }
     if (!drag && tool === 'crop' && crop) { ws.style.cursor = spaceDown ? 'grab' : cropCursor(cropHit(p)); return; }
     if (drag && drag.tool === 'crop') { cropDrag(p, e); drawOverlay(); return; }
+    if (!drag && tool === 'lasso' && lasso && lasso.poly) { lasso.cur = p; drawOverlay(); return; }
     if (!drag) { if (tool === 'brush' || tool === 'eraser' || tool === 'spot' || isCloneTool()) drawOverlay(); return; }
     switch (drag.tool) {
       case 'brush': case 'eraser': {
@@ -1284,6 +1309,11 @@
       case 'gradient':
         gradLine.b = p; drawGradient(); requestRender();
         break;
+      case 'lasso': {
+        const l = lasso.pts[lasso.pts.length - 1];
+        if (Math.hypot(p.x - l.x, p.y - l.y) * view.zoom >= 1.5) { lasso.pts.push(p); drawOverlay(); }
+        break;
+      }
       case 'marquee': {
         let w = p.x - drag.a.x, h = p.y - drag.a.y;
         if (e.shiftKey && drag.mode === 'new') { const m = Math.max(Math.abs(w), Math.abs(h)); w = Math.sign(w || 1) * m; h = Math.sign(h || 1) * m; }
@@ -1312,6 +1342,19 @@
     }
   });
 
+  // fecha o laço: preenche o polígono e combina com a seleção conforme o modo
+  function finishLasso() {
+    if (!lasso) return;
+    const l = lasso; lasso = null;
+    if (l.pts.length >= 3) {
+      const c = newCanvas(doc.w, doc.h), x = c.getContext('2d');
+      x.beginPath(); l.pts.forEach((q, i) => i ? x.lineTo(q.x, q.y) : x.moveTo(q.x, q.y)); x.closePath();
+      x.fillStyle = '#fff'; x.fill();
+      combineSel(c, l.mode);
+      status(sel ? `Seleção: ${sel.w} × ${sel.h} px` : 'Seleção vazia');
+    } else if (!l.poly && l.mode === 'new') sel = null; // só um clique: desmarca
+    drawOverlay();
+  }
   function endPointer() {
     if (panning) { panning = null; updateCursor(); return; }
     if (!drag) return;
@@ -1326,6 +1369,7 @@
         else stroke = null;
         gradLine = null; render();
         break;
+      case 'lasso': finishLasso(); break;
       case 'marquee':
         if (d.mode === 'new') { if (!d.moved || !sel || sel.w < 1 || sel.h < 1) sel = null; }
         else if (selDraft && selDraft.w >= 1 && selDraft.h >= 1) combineSel(rasterShape(selDraft), d.mode);
@@ -1344,7 +1388,7 @@
     }
   }
   ws.addEventListener('pointerup', endPointer);
-  ws.addEventListener('dblclick', e => { if (xf && cropHit(docPt(e), xf.box).mode === 'move') return applyTransform(); if (tool === 'crop' && crop && cropHit(docPt(e)).mode === 'move') applyCrop(); });
+  ws.addEventListener('dblclick', e => { if (tool === 'lasso' && lasso && lasso.poly) return finishLasso(); if (xf && cropHit(docPt(e), xf.box).mode === 'move') return applyTransform(); if (tool === 'crop' && crop && cropHit(docPt(e)).mode === 'move') applyCrop(); });
   ws.addEventListener('pointercancel', endPointer);
   ws.addEventListener('pointerleave', () => { cursor.in = false; drawOverlay(); });
 
@@ -2143,6 +2187,11 @@
         select('Modo', 'mode', SEL_MODES);
         hint('Shift+arrastar adiciona · Alt subtrai · Ctrl+D desmarca · Ctrl+J camada via cópia');
         break;
+      case 'lasso':
+        select('Tipo', 'type', [['free', 'Mão livre'], ['poly', 'Poligonal']], () => { lasso = null; drawOverlay(); buildOptions(); });
+        select('Modo', 'mode', SEL_MODES);
+        hint(o.type === 'poly' ? 'Clique para cada vértice · clique no 1º ponto, duplo clique ou Enter fecha · Backspace volta um · Esc cancela' : 'Arraste contornando a área · solte para fechar · Shift adiciona · Alt subtrai');
+        break;
       case 'wand':
         select('Modo', 'mode', SEL_MODES);
         range('Tolerância', 'tolerance', 0, 255); check('Contíguo', 'contiguous'); check('Todas as camadas', 'allLayers');
@@ -2200,7 +2249,7 @@
   document.querySelectorAll('#toolbar [data-tool]').forEach(b => b.addEventListener('click', () => setTool(b.dataset.tool)));
 
   // ---------- teclado
-  const TOOL_KEYS = { v: 'move', m: 'marquee', w: 'wand', s: 'clone', j: 'spot', b: 'brush', e: 'eraser', g: 'bucket', i: 'eyedropper', t: 'text', h: 'hand', z: 'zoom', c: 'crop' };
+  const TOOL_KEYS = { v: 'move', m: 'marquee', w: 'wand', l: 'lasso', s: 'clone', j: 'spot', b: 'brush', e: 'eraser', g: 'bucket', i: 'eyedropper', t: 'text', h: 'hand', z: 'zoom', c: 'crop' };
   window.addEventListener('keydown', e => {
     if (!modal.hidden) { if (e.key === 'Escape') { e.preventDefault(); dlg && dlg.cancel(); } return; }
     if (e.target.matches && e.target.matches('input, textarea, select, [contenteditable="true"]')) return;
@@ -2210,6 +2259,11 @@
       if (k === 'escape') { e.preventDefault(); return cancelTransform(); }
       const arrows = { arrowleft: [-1, 0], arrowright: [1, 0], arrowup: [0, -1], arrowdown: [0, 1] };
       if (arrows[k]) { e.preventDefault(); const st = e.shiftKey ? 10 : 1; xf.box.cx += arrows[k][0] * st; xf.box.cy += arrows[k][1] * st; renderXf(false); drawOverlay(); return; }
+    }
+    if (lasso) {
+      if (k === 'enter') { e.preventDefault(); return finishLasso(); }
+      if (k === 'escape') { e.preventDefault(); lasso = null; return drawOverlay(); }
+      if (k === 'backspace' && lasso.poly) { e.preventDefault(); lasso.pts.pop(); if (!lasso.pts.length) lasso = null; return drawOverlay(); }
     }
     if (mod && k === 't') { e.preventDefault(); return run('freeTransform'); } // Ctrl+T (se o navegador deixar) e Ctrl+Alt+T
     let cmd = null;
