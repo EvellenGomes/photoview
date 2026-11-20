@@ -23,8 +23,9 @@
   let uid = 0, revCounter = 0;
   const active = () => doc.layers[doc.active];
   const touch = L => { L.rev = ++revCounter; };
-  const makeLayer = (name, canvas) => ({ id: ++uid, name, canvas: canvas || newCanvas(doc.w, doc.h), visible: true, opacity: 1, blend: 'source-over', mask: null, maskOn: true, maskEdit: false, rev: ++revCounter });
-  const insertLayer = L => { doc.layers.splice(doc.active + 1, 0, L); doc.active++; };
+  const makeLayer = (name, canvas) => ({ id: ++uid, name, canvas: canvas || newCanvas(doc.w, doc.h), visible: true, opacity: 1, blend: 'source-over', mask: null, maskOn: true, maskEdit: false, pid: 0, rev: ++revCounter });
+  // a camada nova entra no mesmo grupo (mesmo pai) da camada ativa
+  const insertLayer = L => { const A = active(); L.pid = A ? (A.pid || 0) : 0; doc.layers.splice(doc.active + 1, 0, L); doc.active++; };
 
   const strokeCv = newCanvas(1, 1), scratch = newCanvas(1, 1), maskTmp = newCanvas(1, 1), maskPrev = newCanvas(1, 1);
   const clonePaint = newCanvas(1, 1), cloneOut = newCanvas(1, 1); // carimbo: origem deslocada e resultado recortado
@@ -192,7 +193,52 @@
   // ---------- renderização
   let stroke = null; // traço em andamento (pincel, borracha, degradê)
   // assinatura do que já foi composto (para o cache das camadas de ajuste)
-  const layerSig = L => `${L.id}.${L.rev}.${+L.visible}.${L.opacity}.${L.blend}.${+L.maskOn}.${L.fx ? JSON.stringify(L.fx) : ''}.${L.adj ? JSON.stringify(L.adj) : ''}|`;
+  // ---------- grupos de camadas
+  // Um grupo é uma camada "cabeçalho" (group:true) com os filhos logo abaixo na pilha (filho.pid = id do grupo).
+  // Visibilidade e opacidade do grupo valem para os filhos (opacidade multiplicada); grupos podem ter grupos dentro.
+  const pidOf = l => l.pid || 0;
+  const groupById = id => id ? doc.layers.find(g => g.id === id && g.group) : null;
+  function effVisible(L) { for (let g = groupById(pidOf(L)); g; g = groupById(pidOf(g))) if (!g.visible) return false; return L.visible; }
+  function effOpacity(L) { let o = L.opacity; for (let g = groupById(pidOf(L)); g; g = groupById(pidOf(g))) o *= g.opacity; return o; }
+  function descendantsOf(G) {
+    const out = [], walk = id => { for (const L of doc.layers) if (pidOf(L) === id) { out.push(L); if (L.group) walk(L.id); } };
+    walk(G.id); return out;
+  }
+  const blockOf = L => (L.group ? [...descendantsOf(L), L] : [L]).sort((a, b) => doc.layers.indexOf(a) - doc.layers.indexOf(b));
+  const hiddenByCollapse = L => { for (let g = groupById(pidOf(L)); g; g = groupById(pidOf(g))) if (g.collapsed) return true; return false; };
+  const depthOf = L => { let d = 0; for (let g = groupById(pidOf(L)); g; g = groupById(pidOf(g))) d++; return d; };
+  const multi = new Set(); // ids das camadas selecionadas no painel (Ctrl/Shift+clique)
+  const selectedLayers = () => multi.size > 1 ? doc.layers.filter(l => multi.has(l.id)) : [active()];
+  let groupCount = 1;
+  // reordena a pilha para cada grupo ficar contíguo logo abaixo do seu cabeçalho (irmãos mantêm a ordem atual)
+  function normalizeGroups() {
+    const act = doc.layers[doc.active], kids = new Map();
+    for (const L of doc.layers) {
+      if (L.pid && !groupById(L.pid)) L.pid = 0;
+      const p = pidOf(L); if (!kids.has(p)) kids.set(p, []); kids.get(p).push(L);
+    }
+    const out = [], emit = p => { for (const L of (kids.get(p) || [])) { if (L.group) emit(L.id); out.push(L); } };
+    emit(0);
+    if (out.length === doc.layers.length) doc.layers = out;
+    doc.active = Math.max(0, doc.layers.indexOf(act));
+  }
+  // move um bloco (camada ou grupo inteiro) para logo acima/abaixo de T, no mesmo nível de T
+  function placeBlock(block, T, above) {
+    const set = new Set(block); doc.layers = doc.layers.filter(l => !set.has(l));
+    const tb = T.group ? [T, ...descendantsOf(T)] : [T], pos = tb.map(l => doc.layers.indexOf(l));
+    doc.layers.splice(above ? Math.max(...pos) + 1 : Math.min(...pos), 0, ...block);
+    block[block.length - 1].pid = pidOf(T);
+    normalizeGroups();
+  }
+  // move um bloco para dentro do grupo G, no topo
+  function placeInto(block, G) {
+    const set = new Set(block); doc.layers = doc.layers.filter(l => !set.has(l));
+    doc.layers.splice(doc.layers.indexOf(G), 0, ...block);
+    block[block.length - 1].pid = G.id;
+    normalizeGroups();
+  }
+
+  const layerSig = L => `${L.id}.${L.rev}.${+effVisible(L)}.${effOpacity(L)}.${L.blend}.${+L.maskOn}.${L.fx ? JSON.stringify(L.fx) : ''}.${L.adj ? JSON.stringify(L.adj) : ''}|`;
   // ajuste aplicado sobre tudo o que está abaixo (lido do próprio canvas de destino)
   function adjustedBelow(ctx, L, sig, liveBelow) {
     const useCache = ctx.canvas === viewCv, c = L._adjC, now = performance.now();
@@ -219,15 +265,16 @@
     let sig = `${doc.w}x${doc.h}|`, liveBelow = false;
     doc.layers.forEach((L, i) => {
       if (i >= upTo) return;
+      if (L.group) { sig += layerSig(L); return; } // cabeçalho de grupo não desenha nada
       const live = withStroke && stroke && i === doc.active;
       if (L.adj) {
-        if (L.visible) {
+        if (effVisible(L)) {
           const adjusted = adjustedBelow(ctx, L, sig + layerSig(L), liveBelow);
           const t = adjTmp.getContext('2d');
           t.globalCompositeOperation = 'source-over'; t.clearRect(0, 0, doc.w, doc.h); t.drawImage(adjusted, 0, 0);
           if (L.mask && L.maskOn) { t.globalCompositeOperation = 'destination-in'; t.drawImage(live && stroke.onMask ? liveMask(L) : L.mask, 0, 0); }
           t.globalCompositeOperation = 'source-over';
-          ctx.globalAlpha = L.opacity;
+          ctx.globalAlpha = effOpacity(L);
           // "source-atop" troca as cores sem mexer na transparência do que está abaixo
           ctx.globalCompositeOperation = L.blend === 'source-over' ? 'source-atop' : L.blend;
           ctx.drawImage(adjTmp, 0, 0);
@@ -237,7 +284,7 @@
       }
       sig += layerSig(L);
       if (live) { liveBelow = true; sig += `live${performance.now()}`; }
-      if (!L.visible) return;
+      if (!effVisible(L)) return;
       let src;
       if (live) {
         // camada sendo editada agora: monta a prévia sem cache
@@ -264,7 +311,7 @@
         }
         if (hasFx(L)) src = styled(L, src, true);
       } else src = layerRender(L);
-      ctx.globalAlpha = L.opacity;
+      ctx.globalAlpha = effOpacity(L);
       ctx.globalCompositeOperation = L.blend;
       ctx.drawImage(src, 0, 0);
     });
@@ -511,7 +558,7 @@
         const same = p && p.rev === L.rev;
         const canvas = same ? p.canvas : cloneCanvas(L.canvas);
         const mask = same ? p.mask : (L.mask ? cloneCanvas(L.mask) : null);
-        return { id: L.id, name: L.name, visible: L.visible, opacity: L.opacity, blend: L.blend, fx: L.fx || null, adj: L.adj || null, text: L.text || null, maskOn: L.maskOn, maskEdit: L.maskEdit, rev: L.rev, canvas, mask };
+        return { id: L.id, name: L.name, visible: L.visible, opacity: L.opacity, blend: L.blend, fx: L.fx || null, adj: L.adj || null, text: L.text || null, group: !!L.group, pid: L.pid || 0, collapsed: !!L.collapsed, maskOn: L.maskOn, maskEdit: L.maskEdit, rev: L.rev, canvas, mask };
       }),
     };
   }
@@ -594,7 +641,7 @@
   function saveProject() {
     const data = {
       app: 'photoview', version: 1, w: doc.w, h: doc.h, active: doc.active,
-      layers: doc.layers.map(L => ({ name: L.name, visible: L.visible, opacity: L.opacity, blend: L.blend, fx: L.fx || null, adj: L.adj || null, text: L.text || null, maskOn: L.maskOn, mask: L.mask ? L.mask.toDataURL('image/png') : null, data: L.canvas.toDataURL('image/png') })),
+      layers: doc.layers.map(L => ({ name: L.name, visible: L.visible, opacity: L.opacity, blend: L.blend, fx: L.fx || null, adj: L.adj || null, text: L.text || null, id: L.id, group: !!L.group, pid: L.pid || 0, collapsed: !!L.collapsed, maskOn: L.maskOn, mask: L.mask ? L.mask.toDataURL('image/png') : null, data: L.canvas.toDataURL('image/png') })),
     };
     download(new Blob([JSON.stringify(data)], { type: 'application/json' }), `${doc.name}.pview`);
     status('Projeto salvo');
@@ -611,11 +658,17 @@
       doc.name = baseName(file); sel = null;
       doc.layers = data.layers.map((l, i) => {
         const L = makeLayer(l.name);
-        Object.assign(L, { visible: l.visible, opacity: l.opacity, blend: l.blend, fx: l.fx || null, adj: l.adj || null, text: l.text || null, maskEdit: !!l.adj });
+        Object.assign(L, { visible: l.visible, opacity: l.opacity, blend: l.blend, fx: l.fx || null, adj: l.adj || null, text: l.text || null, maskEdit: !!l.adj, group: !!l.group, collapsed: !!l.collapsed, _oid: l.id, _opid: l.pid || 0 });
+        if (l.group) L.canvas = newCanvas(1, 1);
         ctxOf(L.canvas).drawImage(imgs[i], 0, 0);
         if (masks[i]) { L.mask = newMask(false); ctxOf(L.mask).drawImage(masks[i], 0, 0); L.maskOn = l.maskOn !== false; }
         return L;
       });
+      { // ids novos: refaz a ligação filho → grupo
+        const byOld = new Map(doc.layers.filter(L => L._oid).map(L => [L._oid, L]));
+        for (const L of doc.layers) { const P = byOld.get(L._opid); L.pid = P && P.group ? P.id : 0; delete L._oid; delete L._opid; }
+        normalizeGroups();
+      }
       doc.active = Math.min(data.active || 0, doc.layers.length - 1);
       history.states = []; history.index = -1;
       pushHistory('Abrir projeto'); render(); fitView(true);
@@ -697,7 +750,8 @@
   const pressureOf = e => e.pointerType === 'pen' ? Math.max(0.05, e.pressure || 0.5) : 1;
   function layerEditable() {
     const L = active();
-    if (!L.visible) { status('A camada ativa está oculta'); return false; }
+    if (L.group) { status('Selecione uma camada dentro do grupo'); return false; }
+    if (!effVisible(L)) { status('A camada ativa está oculta'); return false; }
     return true;
   }
   const cloneState = { src: null, offset: null }; // origem compartilhada por carimbo e pincel corretivo
@@ -1351,6 +1405,14 @@
         break;
       }
       case 'move': {
+        if (active().group) { // grupo: move todas as camadas de dentro juntas
+          const G = active();
+          if (!effVisible(G)) { status('O grupo está oculto'); break; }
+          const items = descendantsOf(G).filter(l => !l.group).map(l => ({ L: l, base: cloneCanvas(l.canvas), mask: l.mask ? cloneCanvas(l.mask) : null }));
+          if (!items.length) { status('O grupo está vazio'); break; }
+          drag = { tool, a: p, group: true, items, moved: false };
+          break;
+        }
         if (!layerEditable()) break;
         const tc = targetCanvas(), src = cloneCanvas(tc);
         let float = src, hole = null;
@@ -1437,6 +1499,13 @@
       case 'move': {
         const dx = Math.round(p.x - drag.a.x), dy = Math.round(p.y - drag.a.y);
         drag.moved = drag.moved || dx !== 0 || dy !== 0; drag.dx = dx; drag.dy = dy;
+        if (drag.group) {
+          for (const it of drag.items) {
+            const gc = ctxOf(it.L.canvas); gc.clearRect(0, 0, doc.w, doc.h); gc.drawImage(it.base, dx, dy);
+            if (it.mask) { const mc = ctxOf(it.L.mask); mc.clearRect(0, 0, doc.w, doc.h); mc.drawImage(it.mask, dx, dy); }
+          }
+          requestRender(); break;
+        }
         const c = ctxOf(drag.tc);
         c.clearRect(0, 0, doc.w, doc.h);
         if (drag.hole) c.drawImage(drag.hole, 0, 0);
@@ -1564,7 +1633,10 @@
         drawOverlay();
         break;
       case 'move':
-        if (d.moved) {
+        if (d.moved && d.group) {
+          for (const it of d.items) { touch(it.L); if (it.L.text) it.L.text = { ...it.L.text, m: matMul([1, 0, 0, 1, d.dx || 0, d.dy || 0], it.L.text.m || IDENT) }; }
+          pushHistory('Mover grupo');
+        } else if (d.moved) {
           const L = active(); touch(L);
           if (L.text && d.tc === L.canvas && !d.sel0) L.text = { ...L.text, m: matMul([1, 0, 0, 1, d.dx || 0, d.dy || 0], L.text.m || IDENT) };
           pushHistory('Mover');
@@ -2057,6 +2129,18 @@
     newLayer: () => { insertLayer(makeLayer(`Camada ${layerCount++}`)); pushHistory('Nova camada'); render(); },
     dupLayer: () => {
       const L = active();
+      if (L.group) { // duplica o grupo inteiro
+        const block = blockOf(L), map = new Map();
+        const copies = block.map(o => {
+          const N = makeLayer(o === L ? o.name + ' cópia' : o.name, o.group ? newCanvas(1, 1) : cloneCanvas(o.canvas));
+          Object.assign(N, { opacity: o.opacity, blend: o.blend, visible: o.visible, fx: o.fx || null, adj: o.adj || null, text: o.text || null, mask: o.mask ? cloneCanvas(o.mask) : null, maskOn: o.maskOn, maskEdit: false, group: !!o.group, collapsed: !!o.collapsed });
+          map.set(o.id, N); return N;
+        });
+        copies.forEach((N, k) => { const o = block[k]; N.pid = o === L ? pidOf(L) : map.get(o.pid).id; });
+        doc.layers.splice(doc.layers.indexOf(L) + 1, 0, ...copies);
+        normalizeGroups(); doc.active = doc.layers.indexOf(map.get(L.id));
+        pushHistory('Duplicar grupo'); render(); return;
+      }
       const r = L.adj ? null : selBounds(); // ajuste: duplica a camada inteira
       const N = makeLayer(r ? `${L.name} (cópia da seleção)` : `${L.name} cópia`);
       const c = ctxOf(N.canvas);
@@ -2065,14 +2149,25 @@
       insertLayer(N); pushHistory(r ? 'Camada via cópia' : 'Duplicar camada'); render();
     },
     delLayer: () => {
+      const A = active();
+      if (A.group) { // exclui o grupo e tudo o que está dentro
+        const block = blockOf(A);
+        if (doc.layers.length - block.length < 1) return status('O documento precisa de ao menos uma camada');
+        const lo = doc.layers.indexOf(block[0]);
+        doc.layers = doc.layers.filter(l => !block.includes(l));
+        doc.active = Math.max(0, Math.min(lo, doc.layers.length - 1));
+        normalizeGroups(); pushHistory('Excluir grupo'); render(); return;
+      }
       if (doc.layers.length <= 1) return status('O documento precisa de ao menos uma camada');
       doc.layers.splice(doc.active, 1);
       doc.active = Math.max(0, doc.active - 1);
       pushHistory('Excluir camada'); render();
     },
     mergeDown: () => {
+      if (active().group) return commands.mergeGroup();
       if (doc.active === 0) return status('Não há camada abaixo');
       const L = active(), B = doc.layers[doc.active - 1];
+      if (B.group || pidOf(B) !== pidOf(L)) return status('Não dá para mesclar entre grupos diferentes');
       if (B.adj) return status('Não dá para mesclar numa camada de ajuste');
       // a camada de baixo vira pixels finais (máscara e estilo aplicados) antes de receber a de cima
       if (B.mask || hasFx(B)) { const baked = B.visible ? cloneCanvas(layerRender(B)) : newCanvas(doc.w, doc.h); Object.assign(B, { canvas: baked, mask: null, maskEdit: false, fx: null, visible: true }); }
@@ -2091,6 +2186,7 @@
       pushHistory('Mesclar abaixo'); render();
     },
     layerStyle: () => {
+      if (active().group) return status('Grupos não têm estilo de camada');
       if (active().adj) return editAdj(active(), false);
       const L = active(), before = L.fx || null;
       const cur = Object.fromEntries(Object.keys(FX_DEFAULTS).map(k => [k, { ...FX_DEFAULTS[k], ...(before && before[k]) }]));
@@ -2125,6 +2221,7 @@
     },
     addMask: () => {
       const L = active();
+      if (L.group) return status('Grupos não têm máscara');
       if (L.mask) return status('A camada já tem máscara');
       if (sel) { const m = newMask(false); withSel(m.getContext('2d'), x => { x.fillStyle = '#fff'; x.fillRect(0, 0, doc.w, doc.h); }); L.mask = m; sel = null; drawOverlay(); }
       else L.mask = newMask(true);
@@ -2188,16 +2285,51 @@
       pushHistory('Achatar imagem'); render();
     },
     layerUp: () => {
-      const i = doc.active;
-      if (i >= doc.layers.length - 1) return;
-      [doc.layers[i], doc.layers[i + 1]] = [doc.layers[i + 1], doc.layers[i]]; doc.active++;
-      pushHistory('Reordenar camada'); render();
+      const A = active(), block = blockOf(A), top = Math.max(...block.map(l => doc.layers.indexOf(l))), above = doc.layers[top + 1];
+      if (!above) return;
+      const parent = groupById(pidOf(A));
+      if (above === parent) placeBlock(block, parent, true); // era o topo do grupo: sai dele
+      else { let S = above; while (S && pidOf(S) !== pidOf(A)) S = groupById(pidOf(S)); if (!S) return; placeBlock(block, S, true); }
+      doc.active = doc.layers.indexOf(A); pushHistory('Reordenar camada'); render();
     },
     layerDown: () => {
-      const i = doc.active;
-      if (i <= 0) return;
-      [doc.layers[i], doc.layers[i - 1]] = [doc.layers[i - 1], doc.layers[i]]; doc.active--;
-      pushHistory('Reordenar camada'); render();
+      const A = active(), block = blockOf(A), low = Math.min(...block.map(l => doc.layers.indexOf(l))), below = doc.layers[low - 1];
+      if (!below) return;
+      let S = below; while (S && pidOf(S) !== pidOf(A)) S = groupById(pidOf(S));
+      if (S) placeBlock(block, S, false);
+      else { const parent = groupById(pidOf(A)); if (!parent) return; placeBlock(block, parent, false); } // era o fundo do grupo: sai dele
+      doc.active = doc.layers.indexOf(A); pushHistory('Reordenar camada'); render();
+    },
+    groupLayers: () => {
+      commitText();
+      const sels = selectedLayers();
+      if (sels.some(l => pidOf(l) !== pidOf(sels[0]))) return status('Selecione camadas do mesmo nível para agrupar');
+      const G = makeLayer('Grupo ' + groupCount++, newCanvas(1, 1)); G.group = true; G.pid = pidOf(sels[0]);
+      const top = Math.max(...sels.map(l => doc.layers.indexOf(l)));
+      doc.layers.splice(top + 1, 0, G);
+      for (const l of sels) l.pid = G.id;
+      multi.clear(); normalizeGroups(); doc.active = doc.layers.indexOf(G);
+      pushHistory('Agrupar camadas'); render();
+    },
+    ungroup: () => {
+      const G = active();
+      if (!G.group) return status('Selecione um grupo');
+      for (const l of doc.layers) if (pidOf(l) === G.id) l.pid = pidOf(G);
+      const i = doc.layers.indexOf(G); doc.layers.splice(i, 1);
+      doc.active = Math.max(0, Math.min(i - 1, doc.layers.length - 1));
+      normalizeGroups(); pushHistory('Desagrupar'); render();
+    },
+    mergeGroup: () => {
+      const G = active();
+      if (!G.group) return status('Selecione um grupo');
+      const block = blockOf(G), saved = doc.layers, pos = Math.min(...block.map(l => saved.indexOf(l)));
+      // compõe só o grupo (com opacidade e visibilidade dele) numa camada nova
+      doc.layers = block; const savedActive = doc.active; doc.active = -1;
+      const cv = newCanvas(doc.w, doc.h); composite(cv.getContext('2d'), false, true);
+      doc.layers = saved; doc.active = savedActive;
+      const N = makeLayer(G.name, cv); N.pid = pidOf(G);
+      doc.layers = saved.filter(l => !block.includes(l)); doc.layers.splice(pos, 0, N);
+      doc.active = pos; normalizeGroups(); pushHistory('Mesclar grupo'); render();
     },
 
     zoomIn: () => zoomAt(view.zoom * 1.25), zoomOut: () => zoomAt(view.zoom * 0.8),
@@ -2224,19 +2356,33 @@
   opSlider.addEventListener('input', () => { active().opacity = opSlider.value / 100; $('#layerOpacityVal').textContent = opSlider.value + '%'; requestRender(); });
   opSlider.addEventListener('change', () => pushHistory('Opacidade da camada'));
 
-  let dragIndex = null;
+  let dragIndex = null, lastPick = null;
+  function drawFolderIcon(c) {
+    c.fillStyle = '#3a3d43'; c.fillRect(0, 0, 80, 64);
+    c.fillStyle = '#d9a63a'; c.beginPath(); c.roundRect(14, 14, 24, 10, 3); c.fill();
+    c.fillStyle = '#f4c95d'; c.beginPath(); c.roundRect(14, 20, 52, 32, 4); c.fill();
+  }
   function renderLayers() {
     const list = $('#layerList'); list.innerHTML = '';
     for (let i = doc.layers.length - 1; i >= 0; i--) {
       const L = doc.layers[i];
+      if (hiddenByCollapse(L)) continue;
       const li = document.createElement('li');
-      li.className = i === doc.active ? 'active' : '';
+      li.className = (i === doc.active ? 'active' : '') + (L.group ? ' group' : '') + (multi.has(L.id) ? ' multi' : '');
+      li.style.paddingLeft = (8 + depthOf(L) * 16) + 'px';
       li.draggable = true;
+      if (L.group) {
+        const f = document.createElement('button'); f.className = 'fold'; f.textContent = L.collapsed ? '▸' : '▾'; f.title = 'Recolher / expandir';
+        f.onclick = e => { e.stopPropagation(); L.collapsed = !L.collapsed; renderLayers(); };
+        li.appendChild(f);
+      }
       const eye = document.createElement('button');
       eye.className = 'eye' + (L.visible ? '' : ' off'); eye.textContent = '👁'; eye.title = 'Visibilidade';
       eye.onclick = e => { e.stopPropagation(); L.visible = !L.visible; pushHistory(L.visible ? 'Mostrar camada' : 'Ocultar camada'); render(); };
       const th = newCanvas(80, 64), tc = th.getContext('2d'), k = Math.min(80 / doc.w, 64 / doc.h);
-      if (L.adj) {
+      if (L.group) {
+        th.className = 'adj-thumb'; drawFolderIcon(tc);
+      } else if (L.adj) {
         // ícone da camada de ajuste (meio círculo claro/escuro)
         th.className = 'adj-thumb';
         tc.fillStyle = '#3a3d43'; tc.fillRect(0, 0, 80, 64);
@@ -2255,8 +2401,8 @@
       const meta = document.createElement('span'); meta.className = 'meta';
       meta.textContent = (hasFx(L) ? 'fx ' : '') + (L.opacity < 1 ? Math.round(L.opacity * 100) + '%' : '');
       meta.title = hasFx(L) ? 'Clique duas vezes na miniatura para editar o estilo' : '';
-      th.title = 'Conteúdo da camada · duplo clique: estilos de camada';
-      th.ondblclick = e => { e.stopPropagation(); L.adj ? editAdj(L, false) : L.text ? editTextLayer(L) : run('layerStyle'); };
+      th.title = L.group ? 'Grupo · duplo clique: recolher/expandir' : 'Conteúdo da camada · duplo clique: estilos de camada';
+      th.ondblclick = e => { e.stopPropagation(); if (L.group) { L.collapsed = !L.collapsed; renderLayers(); } else L.adj ? editAdj(L, false) : L.text ? editTextLayer(L) : run('layerStyle'); };
       li.append(eye, th);
       let mt = null;
       if (L.mask) {
@@ -2276,10 +2422,23 @@
         li.appendChild(mt);
       }
       li.append(name, meta);
-      li.onclick = () => {
+      li.onclick = e => {
         if (xf) applyTransform();
-        if (doc.active === i) return;
+        if (e.ctrlKey || e.metaKey) { // Ctrl+clique: soma/tira da seleção múltipla
+          if (!multi.size) multi.add(doc.layers[doc.active].id);
+          if (multi.has(L.id)) multi.delete(L.id); else multi.add(L.id);
+          doc.active = i; lastPick = i; renderLayers(); return;
+        }
+        if (e.shiftKey) { // Shift+clique: intervalo a partir do último clique
+          const a = lastPick ?? doc.active; multi.clear();
+          for (let q = Math.min(a, i); q <= Math.max(a, i); q++) if (!hiddenByCollapse(doc.layers[q])) multi.add(doc.layers[q].id);
+          doc.active = i; renderLayers(); return;
+        }
+        lastPick = i;
+        const hadMulti = multi.size > 0; multi.clear();
+        if (doc.active === i && !hadMulti) return;
         doc.active = i;
+        if (hadMulti) return renderLayers();
         list.querySelectorAll('li').forEach(x => x.classList.toggle('active', x === li));
         list.querySelectorAll('.target').forEach(x => x.classList.remove('target'));
         if (mt) (L.maskEdit ? mt : th).classList.add('target');
@@ -2291,9 +2450,11 @@
       li.ondrop = e => {
         e.preventDefault(); e.stopPropagation();
         if (dragIndex === null || dragIndex === i) return;
-        const [moved] = doc.layers.splice(dragIndex, 1);
-        doc.layers.splice(i, 0, moved);
-        doc.active = i; dragIndex = null;
+        const D = doc.layers[dragIndex], block = blockOf(D);
+        dragIndex = null;
+        if (block.includes(L)) return; // não dá para soltar um grupo dentro dele mesmo
+        if (L.group) placeInto(block, L); else placeBlock(block, L, true); // sobre um grupo: entra nele; sobre uma camada: fica acima dela
+        doc.active = doc.layers.indexOf(D);
         pushHistory('Reordenar camada'); render();
       };
       list.appendChild(li);
@@ -2488,6 +2649,7 @@
       else if (k === 's') cmd = 'saveProject';
       else if (k === 'e') cmd = e.shiftKey ? 'exportPNG' : 'mergeDown';
       else if (k === 'j') cmd = 'dupLayer';
+      else if (k === 'g') cmd = e.shiftKey ? 'ungroup' : 'groupLayers';
       else if (k === 'n' && e.shiftKey) cmd = 'newLayer';
       else if (k === 'a') cmd = 'selectAll';
       else if (k === 'd') cmd = 'deselect';

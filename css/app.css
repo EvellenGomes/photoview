@@ -142,3 +142,9 @@ input[type=range] { accent-color: var(--accent); }
   #modal.preview { padding: 60px 8px 0; place-items: start center; }
   #dialog { min-width: 0; width: calc(100vw - 16px); max-width: 420px; }
 }
+
+/* grupos de camadas */
+#layerList li.group:not(.active) { background: #2f3136; }
+#layerList li.group .name { font-weight: 600; }
+#layerList li.multi:not(.active) { background: rgba(59,130,246,.12); }
+#layerList .fold { width: 16px; border: 0; background: none; color: var(--muted); padding: 0; font-size: 12px; }
