@@ -46,6 +46,7 @@
     outerGlow: { on: false, color: '#ffffbe', opacity: 75, spread: 10, size: 15 },
     innerShadow: { on: false, color: '#000000', opacity: 75, angle: 120, distance: 5, size: 5 },
     colorOverlay: { on: false, color: '#ff0000', opacity: 100 },
+    gradOverlay: { on: false, style: 'linear', color1: '#ffffff', color2: '#000000', opacity: 100, angle: 90, scale: 100, reverse: 'no' },
     bevel: { on: false, style: 'inner', technique: 'smooth', direction: 'up', depth: 100, size: 8, soften: 1, angle: 120, hlColor: '#ffffff', hlOpacity: 75, shColor: '#000000', shOpacity: 75 },
     stroke: { on: false, color: '#000000', opacity: 100, size: 3, position: 'outside' },
   };
@@ -125,6 +126,31 @@
       tc.drawImage(src, 0, 0); tc.globalCompositeOperation = 'source-in';
       tc.fillStyle = fx.colorOverlay.color; tc.fillRect(0, 0, w, h);
       o.globalAlpha = fx.colorOverlay.opacity / 100; o.drawImage(t, 0, 0); o.globalAlpha = 1;
+    }
+    const go = fx.gradOverlay; // layers antigas podem não ter o efeito
+    if (go && go.on) {
+      // o degradê é mapeado sobre a caixa dos pixels visíveis da camada e recortado pelo formato dela
+      let x0 = w, y0 = h, x1 = -1, y1 = -1;
+      for (let y = 0, p = 3; y < h; y++) for (let x = 0; x < w; x++, p += 4) if (a[p] > 8) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+      if (x1 >= 0) {
+        const bw = x1 - x0 + 1, bh = y1 - y0 + 1, cx = x0 + bw / 2, cy = y0 + bh / 2, sc = Math.max(0.05, go.scale / 100);
+        const ang = go.angle * Math.PI / 180, dx = Math.cos(ang), dy = Math.sin(ang);
+        const c1 = go.reverse === 'yes' ? go.color2 : go.color1, c2 = go.reverse === 'yes' ? go.color1 : go.color2;
+        const t = newCanvas(w, h), tc = t.getContext('2d');
+        tc.drawImage(src, 0, 0); tc.globalCompositeOperation = 'source-in';
+        let g;
+        if (go.style === 'radial') {
+          g = tc.createRadialGradient(cx, cy, 0, cx, cy, Math.max(1, Math.hypot(bw, bh) / 2 * sc));
+          g.addColorStop(0, c1); g.addColorStop(1, c2);
+        } else {
+          const half = Math.max(1, (Math.abs(dx) * bw + Math.abs(dy) * bh) / 2 * sc);
+          g = tc.createLinearGradient(cx - dx * half, cy - dy * half, cx + dx * half, cy + dy * half);
+          if (go.style === 'reflected') { g.addColorStop(0, c2); g.addColorStop(0.5, c1); g.addColorStop(1, c2); }
+          else { g.addColorStop(0, c1); g.addColorStop(1, c2); }
+        }
+        tc.fillStyle = g; tc.fillRect(0, 0, w, h);
+        o.globalAlpha = go.opacity / 100; o.drawImage(t, 0, 0); o.globalAlpha = 1;
+      }
     }
     const bv = fx.bevel; // layers antigas podem não ter o efeito
     if (bv && bv.on) {
@@ -2246,6 +2272,11 @@
     ['outerGlow', 'Brilho externo', [['color', 'Cor', 'color'], ['opacity', 'Opacidade %', 0, 100], ['spread', 'Espalhamento %', 0, 100], ['size', 'Tamanho', 0, 100]]],
     ['innerShadow', 'Sombra interna', [['color', 'Cor', 'color'], ['opacity', 'Opacidade %', 0, 100], ['angle', 'Ângulo °', -180, 180], ['distance', 'Distância', 0, 100], ['size', 'Tamanho', 0, 100]]],
     ['colorOverlay', 'Sobreposição de cor', [['color', 'Cor', 'color'], ['opacity', 'Opacidade %', 0, 100]]],
+    ['gradOverlay', 'Sobreposição de degradê', [
+      ['style', 'Estilo', [['linear', 'Linear'], ['radial', 'Radial'], ['reflected', 'Espelhado']]],
+      ['color1', 'Cor inicial', 'color'], ['color2', 'Cor final', 'color'],
+      ['opacity', 'Opacidade %', 0, 100], ['angle', 'Ângulo ° (0 = esquerda→direita, 90 = cima→baixo)', -180, 180],
+      ['scale', 'Escala %', 10, 300], ['reverse', 'Inverter cores', [['no', 'Não'], ['yes', 'Sim']]]]],
     ['bevel', 'Chanfro e relevo', [
       ['style', 'Estilo', [['inner', 'Chanfro interno'], ['outer', 'Chanfro externo'], ['emboss', 'Relevo']]],
       ['technique', 'Técnica', [['smooth', 'Suave'], ['chisel', 'Cinzel']]],
